@@ -33,5 +33,13 @@
     "file-based",
     "embedded"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sajjadbzrn/jcell.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sajjadbzrn/jcell/issues"
+  },
+  "homepage": "https://github.com/sajjadbzrn/jcell",
   "license": "MIT"
 }

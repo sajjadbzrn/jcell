@@ -1,22 +1,11 @@
 # @sajjadbzn/jcell
 
-**Core package — schema definitions, validation, and query engine for jcell.**
+**Lightweight, type-safe JSON-file database + ORM for TypeScript.**
 
-Zero runtime dependencies. Runtime-portable (no Node/Bun-specific APIs).
-
-## Install
-
-```bash
-bun add @sajjadbzn/jcell
-# plus a storage adapter:
-bun add @sajjadbzn/jcell-adapter-file
-```
-
-## Usage
+No external database server required. No codegen. No heavy dependencies. Just JSON files in your project root, with full TypeScript inference and schema validation on every write.
 
 ```ts
-import { createDB, schema, t } from '@sajjadbzn/jcell'
-import { fileAdapter } from '@sajjadbzn/jcell-adapter-file'
+import { createDB, schema, t, fileAdapter } from '@sajjadbzn/jcell'
 
 const userSchema = schema({
   id: t.id(),
@@ -31,20 +20,70 @@ const users = db.collection('users', userSchema)
 
 const user = await users.insert({ name: 'Sajjad', role: 'admin' })
 const found = await users.where('name').eq('Sajjad').first()
+await users.update({ id: user.id }, { age: 29 })
+await users.delete({ id: user.id })
 ```
+
+## Install
+
+```bash
+npm install @sajjadbzn/jcell
+# or
+bun add @sajjadbzn/jcell
+```
+
+**Single package — everything included.** No separate adapters to install. Core (schema, query engine, validation), file adapter (atomic writes, crash recovery), and memory adapter (for tests) are all bundled together.
+
+## Features
+
+- **Zero setup** — install and start storing data as JSON files
+- **Fully typed** — schema definitions infer TypeScript types automatically, no codegen
+- **Atomic writes** — writes go to a temp file first, then rename over the target
+- **Crash recovery** — `.bak` snapshot fallback if the main file is corrupted
+- **Schema validation** — every document validated on insert and update
+- **Runtime-portable** — core has zero Node/Bun-specific APIs
+- **Tiny API** — learn in 5 minutes
 
 ## API
 
-| Export | Description |
-|--------|-------------|
-| `createDB(config)` | Create a database instance |
-| `schema(fields)` | Define a typed schema |
-| `t.string()` / `t.number()` / `t.boolean()` / `t.date()` / `t.id()` | Primitive field builders |
-| `t.array(field)` | Array field builder |
-| `t.object(fields)` | Nested object field builder |
-| `t.enum(values)` | Enum field builder |
-| `field.optional()` | Make a field optional |
-| `field.default(value)` | Set a default value |
-| `Collection.insert()` / `.update()` / `.delete()` / `.find()` / `.first()` | Collection CRUD |
-| `Collection.where(field).eq()` / `.gt()` / `.gte()` / `.lt()` / `.lte()` / `.in()` | Query builder |
-| `StorageAdapter` | Interface for custom adapters |
+### Schema builders
+
+| Builder | TS type |
+|---------|---------|
+| `t.id()` | `string` |
+| `t.string()` | `string` |
+| `t.number()` | `number` |
+| `t.boolean()` | `boolean` |
+| `t.date()` | `Date` |
+| `t.array(t.string())` | `string[]` |
+| `t.object({ key: t.string() })` | `{ key: string }` |
+| `t.enum(['a', 'b'] as const)` | `'a' \| 'b'` |
+| `t.string().optional()` | `string \| undefined` |
+| `t.number().default(0)` | `number` (auto-filled) |
+
+### Collection operations
+
+```ts
+const doc = await collection.insert({ name: 'Alice' })
+const all = await collection.find()
+const some = await collection.find({ role: 'admin' })
+const result = await collection.where('age').gt(18).where('role').eq('admin').find()
+const single = await collection.where('name').eq('Alice').first()
+await collection.update({ id: doc.id }, { name: 'Bob' })
+await collection.delete({ id: doc.id })
+```
+
+### Adapters (both bundled)
+
+| Adapter | Import | Runtime |
+|---------|--------|---------|
+| File system | `import { fileAdapter } from '@sajjadbzn/jcell'` | Node.js, Bun |
+| In-memory | `import { memoryAdapter } from '@sajjadbzn/jcell'` | Any (tests, ephemeral) |
+
+## GitHub
+
+https://github.com/sajjadbzrn/jcell
+
+## License
+
+MIT
