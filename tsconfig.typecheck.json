@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@sajjadbzn/jcell": ["./packages/core/src"]
+    }
+  }
+}

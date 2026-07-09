@@ -1,0 +1,18 @@
+{
+  "name": "jcell-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/core"
+  ],
+  "scripts": {
+    "build": "cd packages/core && bun run build",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "typecheck": "bunx tsc -p tsconfig.typecheck.json --noEmit",
+    "publish": "cd packages/core && npm publish"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/bun": "latest"
+  }
+}
