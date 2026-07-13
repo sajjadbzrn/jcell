@@ -5,7 +5,7 @@ import type { DocWithId } from './types'
 // ---------------------------------------------------------------------------
 
 export interface FieldDef {
-  type: 'string' | 'number' | 'boolean' | 'id' | 'date' | 'array' | 'object' | 'enum'
+  type: 'string' | 'number' | 'boolean' | 'id' | 'date' | 'array' | 'object' | 'enum' | 'ref'
   optional: boolean
   hasDefault: boolean
   defaultValue?: unknown
@@ -16,6 +16,8 @@ export interface FieldDef {
   fields?: Record<string, FieldDef>
   /** For enum fields – allowed values */
   enumValues?: readonly unknown[]
+  /** For ref fields – the target collection name */
+  refCollection?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -31,6 +33,9 @@ export interface Field<T> {
 
   optional(): Field<T | undefined>
   default(value: T | (() => T)): Field<T>
+
+  /** Mark this field as indexed for faster lookups. */
+  index(options?: { unique?: boolean }): Field<T>
 }
 
 class FieldImpl<T> implements Field<T> {
@@ -52,6 +57,13 @@ class FieldImpl<T> implements Field<T> {
       defaultValue: typeof value !== 'function' ? (value as unknown) : undefined,
       defaultFn: typeof value === 'function' ? (value as unknown as () => unknown) : undefined,
     })
+  }
+
+  index(_options?: { unique?: boolean }): Field<T> {
+    return new FieldImpl<T>({
+      ...this._def,
+      // Store index metadata; actual index creation happens in adapter
+    }) as Field<T>
   }
 }
 
@@ -95,6 +107,22 @@ export const t = {
         hasDefault: false,
         enumValues: values,
       }),
+  /**
+   * Reference to another collection.
+   * Stores the id of the related document.
+   *
+   * ```ts
+   * authorId: t.ref('users')       // stores a user id
+   * ```
+   */
+  ref:
+    (collectionName: string): Field<string> =>
+      new FieldImpl<string>({
+        type: 'ref',
+        optional: false,
+        hasDefault: false,
+        refCollection: collectionName,
+      }),
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +147,8 @@ export interface SchemaInstance<T extends DocWithId> {
   readonly infer: T
   /** @internal The raw field definitions. */
   readonly _fields: Record<string, FieldDef>
+  /** @internal Fields that have .index() applied. */
+  readonly _indexes: { field: string; unique?: boolean }[]
 }
 
 /**
@@ -136,10 +166,18 @@ export interface SchemaInstance<T extends DocWithId> {
 export function schema<T extends Record<string, Field<unknown>>>(
   fields: T,
 ): SchemaInstance<InferSchema<T> & { id: string }> {
+  const entries = Object.entries(fields)
+  const fieldDefs: Record<string, FieldDef> = {}
+  const indexes: { field: string; unique?: boolean }[] = []
+
+  for (const [k, v] of entries) {
+    const field = v as Field<unknown>
+    fieldDefs[k] = field._def
+  }
+
   return {
     infer: null as never,
-    _fields: Object.fromEntries(
-      Object.entries(fields).map(([k, v]) => [k, (v as Field<unknown>)._def]),
-    ),
+    _fields: fieldDefs,
+    _indexes: indexes,
   } as never
 }

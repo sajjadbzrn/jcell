@@ -25,6 +25,8 @@ function validateValue(value: unknown, def: FieldDef): boolean {
       return typeof value === 'boolean'
     case 'date':
       return value instanceof Date && !Number.isNaN(value.getTime())
+    case 'ref':
+      return typeof value === 'string' && value.length > 0
     case 'array': {
       if (!Array.isArray(value)) return false
       if (!def.itemField) return false

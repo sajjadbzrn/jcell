@@ -1,4 +1,4 @@
-// Core
+// Cloudflare Workers entrypoint — only imports the D1 adapter (no node:fs)
 export { createDB, DB, createMigration } from './db'
 export { schema, t } from './schema'
 export { Collection, QueryBuilder, FieldFilter } from './query-engine'
@@ -26,15 +26,11 @@ export type {
   AfterUpdateHook,
   BeforeDeleteHook,
   AfterDeleteHook,
+  D1Database,
+  D1PreparedStatement,
+  D1Result,
+  D1AdapterConfig,
 } from './types'
 
-// File adapter (Node.js / Bun — file system persistence)
-export { fileAdapter } from './adapters/file'
-export type { FileAdapterConfig } from './adapters/file'
-
-// Memory adapter (any runtime — ephemeral in-memory storage)
-export { memoryAdapter } from './adapters/memory'
-
-// D1 adapter (Cloudflare Workers — SQLite edge database)
 export { d1Adapter } from './adapters/d1'
-export type { D1AdapterConfig } from './types'
+export { memoryAdapter } from './adapters/memory'

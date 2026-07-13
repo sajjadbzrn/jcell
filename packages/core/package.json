@@ -1,7 +1,7 @@
 {
   "name": "@sajjadbzn/jcell",
-  "version": "0.1.1",
-  "description": "Lightweight, type-safe JSON-file database + ORM for TypeScript — zero setup, full TypeScript inference",
+  "version": "1.3.0",
+  "description": "Lightweight, type-safe JSON-file database + ORM for TypeScript — zero setup, full TypeScript inference, works on Node, Bun & Cloudflare Workers",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,6 +9,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./d1": {
+      "import": "./dist/d1.js",
+      "types": "./dist/d1.d.ts"
     }
   },
   "files": [
@@ -16,7 +20,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "bun build ./src/index.ts --outdir ./dist --target bun && bunx tsc --emitDeclarationOnly",
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun && bun build ./src/d1.ts --outdir ./dist --target bun && bunx tsc --emitDeclarationOnly",
     "prepublishOnly": "bun run build",
     "publish": "npm publish"
   },
