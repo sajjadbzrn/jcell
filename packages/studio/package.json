@@ -14,8 +14,8 @@
   ],
   "scripts": {
     "build": "bun build ./src/cli.ts --outdir ./dist --target bun",
-    "prepublishOnly": "bun run build",
-    "publish": "npm publish"
+    "prepublishOnly": "node -e \"console.error('ERROR: Use `npm run publish` instead of `npm publish` to publish the studio package.'); process.exit(1)\"",
+    "publish": "node ./scripts/publish.js"
   },
   "publishConfig": {
     "access": "public"
