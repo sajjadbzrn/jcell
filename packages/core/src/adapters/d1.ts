@@ -189,6 +189,123 @@ export function d1Adapter(config: D1AdapterConfig): StorageAdapter {
   }
 
   // -----------------------------------------------------------------------
+  // Aggregation $match condition → SQL builder
+  // (defined inside the closure to access serializeValue)
+  // -----------------------------------------------------------------------
+
+  function buildAggMatchCondition(
+    condition: unknown,
+  ): { sql: string; values: unknown[] } {
+    if (typeof condition !== 'object' || condition === null) {
+      return { sql: '', values: [] }
+    }
+
+    const obj = condition as Record<string, unknown>
+    const entries = Object.entries(obj)
+    if (entries.length === 0) return { sql: '', values: [] }
+
+    // Pure $or or $and at the top level
+    if (entries[0]![0] === '$or' && entries.length === 1) {
+      const parts = (entries[0]![1] as unknown[]).map((sub) => buildAggMatchCondition(sub))
+      return {
+        sql: '(' + parts.map((p) => p.sql).join(' OR ') + ')',
+        values: parts.flatMap((p) => p.values),
+      }
+    }
+
+    if (entries[0]![0] === '$and' && entries.length === 1) {
+      const parts = (entries[0]![1] as unknown[]).map((sub) => buildAggMatchCondition(sub))
+      return {
+        sql: '(' + parts.map((p) => p.sql).join(' AND ') + ')',
+        values: parts.flatMap((p) => p.values),
+      }
+    }
+
+    // Mixed: AND all entries
+    const parts = entries.map(([key, value]) => {
+      if (key === '$or') {
+        const subParts = (value as unknown[]).map((sub) => buildAggMatchCondition(sub))
+        return { sql: '(' + subParts.map((p) => p.sql).join(' OR ') + ')', values: subParts.flatMap((p) => p.values) }
+      }
+      if (key === '$and') {
+        const subParts = (value as unknown[]).map((sub) => buildAggMatchCondition(sub))
+        return { sql: '(' + subParts.map((p) => p.sql).join(' AND ') + ')', values: subParts.flatMap((p) => p.values) }
+      }
+
+      // Field with operator object { "field": { $gte: 30, $lte: 50 } }
+      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        return buildFieldCondition(key, value as Record<string, unknown>)
+      }
+
+      // Simple equality
+      return { sql: '"' + key + '" = ?', values: [serializeValue(value)] }
+    })
+
+    return {
+      sql: parts.map((p) => p.sql).join(' AND '),
+      values: parts.flatMap((p) => p.values),
+    }
+  }
+
+  function buildFieldCondition(
+    field: string,
+    ops: Record<string, unknown>,
+  ): { sql: string; values: unknown[] } {
+    const conditions: string[] = []
+    const values: unknown[] = []
+
+    for (const [op, opValue] of Object.entries(ops)) {
+      switch (op) {
+        case '$eq':
+          conditions.push('"' + field + '" = ?')
+          values.push(serializeValue(opValue))
+          break
+        case '$ne':
+          conditions.push('"' + field + '" != ?')
+          values.push(serializeValue(opValue))
+          break
+        case '$gt':
+          conditions.push('"' + field + '" > ?')
+          values.push(serializeValue(opValue))
+          break
+        case '$gte':
+          conditions.push('"' + field + '" >= ?')
+          values.push(serializeValue(opValue))
+          break
+        case '$lt':
+          conditions.push('"' + field + '" < ?')
+          values.push(serializeValue(opValue))
+          break
+        case '$lte':
+          conditions.push('"' + field + '" <= ?')
+          values.push(serializeValue(opValue))
+          break
+        case '$in': {
+          const arr = opValue as unknown[]
+          if (arr.length === 0) {
+            conditions.push('1 = 0')
+          } else {
+            const placeholders = arr.map(() => '?').join(', ')
+            conditions.push('"' + field + '" IN (' + placeholders + ')')
+            for (const v of arr) values.push(serializeValue(v))
+          }
+          break
+        }
+        case '$contains':
+          conditions.push('"' + field + '" LIKE ?')
+          values.push('%' + (opValue as string) + '%')
+          break
+        case '$startsWith':
+          conditions.push('"' + field + '" LIKE ?')
+          values.push('' + (opValue as string) + '%')
+          break
+      }
+    }
+
+    return { sql: conditions.join(' AND '), values }
+  }
+
+  // -----------------------------------------------------------------------
   // Adapter implementation
   // -----------------------------------------------------------------------
 
@@ -362,18 +479,15 @@ export function d1Adapter(config: D1AdapterConfig): StorageAdapter {
       let whereClause = ''
       const whereValues: unknown[] = []
       let selectExpr = '*'
-      let groupBy = ''
       let limitClause = ''
       let offsetClause = ''
 
       for (const stage of pipeline) {
         if ('$match' in stage) {
-          const clauses: string[] = []
-          for (const [key, value] of Object.entries(stage.$match)) {
-            clauses.push(`"${key}" = ?`)
-            whereValues.push(value)
-          }
-          whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''
+          const result = buildAggMatchCondition(stage.$match)
+          whereClause = result.sql ? 'WHERE ' + result.sql : ''
+          whereValues.length = 0
+          whereValues.push(...result.values)
         } else if ('$group' in stage) {
           const group = stage.$group
           const aggParts: string[] = []
@@ -395,7 +509,6 @@ export function d1Adapter(config: D1AdapterConfig): StorageAdapter {
             }
           }
           selectExpr = aggParts.join(', ')
-          groupBy = ''
         } else if ('$count' in stage) {
           selectExpr = 'COUNT(*) as count'
         } else if ('$limit' in stage) {
@@ -408,7 +521,6 @@ export function d1Adapter(config: D1AdapterConfig): StorageAdapter {
       const sql = [
         `SELECT ${selectExpr} FROM "${tableName(collection)}"`,
         whereClause,
-        groupBy,
         limitClause,
         offsetClause,
       ]

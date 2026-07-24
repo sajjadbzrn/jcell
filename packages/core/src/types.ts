@@ -129,7 +129,26 @@ export interface IndexOptions {
 // Aggregation
 // ---------------------------------------------------------------------------
 
-/** Aggregation pipeline stage types. */
+/**
+ * Aggregation pipeline stage types.
+ *
+ * Within a `$match` stage, you can use MongoDB-style query operators:
+ *
+ * ```ts
+ * // Field-level operators
+ * { $match: { age: { $gte: 30, $lte: 50 } } }
+ *
+ * // Logical OR / AND within $match
+ * { $match: { $or: [{ role: 'admin' }, { age: { $gte: 30 } }] } }
+ * { $match: { $and: [{ role: 'admin' }, { age: { $gte: 30 } }] } }
+ *
+ * // Mixed — AND between top-level fields and logical operators
+ * { $match: { role: 'admin', $or: [{ score: { $gte: 100 } }, { age: { $lt: 30 } }] } }
+ * ```
+ *
+ * Supported field operators: `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`,
+ * `$in`, `$contains`, `$startsWith`.
+ */
 export type AggregateStage =
   | { $match: Record<string, unknown> }
   | { $group: Record<string, unknown> }
@@ -137,6 +156,10 @@ export type AggregateStage =
   | { $limit: number }
   | { $skip: number }
   | { $count: string }
+  /** Pipeline sub-stage: run the sub-pipeline and keep docs that match ANY sub-stage. */
+  | { $or: AggregateStage[] }
+  /** Pipeline sub-stage: run the sub-pipeline and keep docs that match ALL sub-stages. */
+  | { $and: AggregateStage[] }
 
 // ---------------------------------------------------------------------------
 // Hooks / Middleware

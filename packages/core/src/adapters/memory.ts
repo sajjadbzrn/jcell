@@ -86,6 +86,93 @@ export function memoryAdapter(): StorageAdapter {
     }
   }
 
+  /**
+   * Evaluate an aggregation $match condition against a document.
+   * Supports:
+   * - Simple equality:     `{ field: value }`
+   * - Field operators:    `{ field: { $gte: 30, $lte: 50 } }`
+   * - Logical operators:  `{ $or: [cond1, cond2] }`, `{ $and: [cond1, cond2] }`
+   * - Mixed:              `{ role: 'admin', $or: [...] }`
+   */
+  function evalMatchCondition(doc: Record<string, unknown>, condition: unknown): boolean {
+    if (typeof condition !== 'object' || condition === null) {
+      return false
+    }
+
+    const obj = condition as Record<string, unknown>
+    const entries = Object.entries(obj)
+
+    // Handle $or / $and at the top level
+    if (entries.length === 1 && entries[0]![0] === '$or') {
+      const orArr = entries[0]![1] as unknown[]
+      return orArr.some((sub) => evalMatchCondition(doc, sub))
+    }
+
+    if (entries.length === 1 && entries[0]![0] === '$and') {
+      const andArr = entries[0]![1] as unknown[]
+      return andArr.every((sub) => evalMatchCondition(doc, sub))
+    }
+
+    // Mixed: AND all top-level entries, processing $or/$and among them
+    return entries.every(([key, value]) => {
+      if (key === '$or') {
+        const orArr = value as unknown[]
+        return orArr.some((sub) => evalMatchCondition(doc, sub))
+      }
+      if (key === '$and') {
+        const andArr = value as unknown[]
+        return andArr.every((sub) => evalMatchCondition(doc, sub))
+      }
+
+      // Field-level operators
+      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        return evalFieldOperators(doc[key], value as Record<string, unknown>)
+      }
+
+      // Simple equality
+      return doc[key] === value
+    })
+  }
+
+  function evalFieldOperators(fieldValue: unknown, ops: Record<string, unknown>): boolean {
+    for (const [op, opValue] of Object.entries(ops)) {
+      switch (op) {
+        case '$eq':
+          if (fieldValue !== opValue) return false
+          break
+        case '$ne':
+          if (fieldValue === opValue) return false
+          break
+        case '$gt':
+          if (typeof fieldValue !== 'number' || typeof opValue !== 'number' || !(fieldValue > opValue)) return false
+          break
+        case '$gte':
+          if (typeof fieldValue !== 'number' || typeof opValue !== 'number' || !(fieldValue >= opValue)) return false
+          break
+        case '$lt':
+          if (typeof fieldValue !== 'number' || typeof opValue !== 'number' || !(fieldValue < opValue)) return false
+          break
+        case '$lte':
+          if (typeof fieldValue !== 'number' || typeof opValue !== 'number' || !(fieldValue <= opValue)) return false
+          break
+        case '$in': {
+          const arr = opValue as unknown[]
+          if (!arr.includes(fieldValue)) return false
+          break
+        }
+        case '$contains':
+          if (typeof fieldValue !== 'string' || typeof opValue !== 'string' || !fieldValue.includes(opValue)) return false
+          break
+        case '$startsWith':
+          if (typeof fieldValue !== 'string' || typeof opValue !== 'string' || !fieldValue.startsWith(opValue)) return false
+          break
+        default:
+          return false
+      }
+    }
+    return true
+  }
+
   function matchesFilters(
     doc: Record<string, unknown>,
     filters: FilterClause[],
@@ -225,12 +312,23 @@ export function memoryAdapter(): StorageAdapter {
       for (const stage of pipeline) {
         if ('$match' in stage) {
           const filter = stage.$match
-          docs = docs.filter((doc) => {
-            for (const [key, value] of Object.entries(filter)) {
-              if (doc[key] !== value) return false
-            }
-            return true
-          })
+          docs = docs.filter((doc) => evalMatchCondition(doc, filter))
+        } else if ('$or' in stage) {
+          const subPipeline = stage.$or
+          docs = docs.filter((doc) =>
+            subPipeline.some((subStage) => {
+              if ('$match' in subStage) return evalMatchCondition(doc, subStage.$match)
+              return false
+            }),
+          )
+        } else if ('$and' in stage) {
+          const subPipeline = stage.$and
+          docs = docs.filter((doc) =>
+            subPipeline.every((subStage) => {
+              if ('$match' in subStage) return evalMatchCondition(doc, subStage.$match)
+              return false
+            }),
+          )
         } else if ('$group' in stage) {
           const group = stage.$group
           const result: Record<string, unknown> = { _id: null }

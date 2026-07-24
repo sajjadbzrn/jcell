@@ -857,6 +857,183 @@ export class Collection<T extends DocWithId> {
     return toDelete.length
   }
 
+  // -----------------------------------------------------------------------
+  // Batch operations
+  // -----------------------------------------------------------------------
+
+  /**
+   * Insert multiple documents in a single batch.
+   * All documents are validated, then inserted in one operation.
+   *
+   * ```ts
+   * const users = await db.collection('users', userSchema)
+   *   .insertMany([
+   *     { name: 'Alice', role: 'admin' },
+   *     { name: 'Bob', role: 'user' },
+   *   ])
+   * ```
+   */
+  async insertMany(docs: Partial<T>[]): Promise<T[]> {
+    if (docs.length === 0) return []
+
+    // Process each doc: apply defaults + validate + hydrate
+    const processed: T[] = []
+    for (const doc of docs) {
+      const hydrated = applyDefaults(
+        doc as Record<string, unknown>,
+        this.schema._fields,
+      ) as Record<string, unknown>
+
+      const errors = validateDocument(hydrated, this.schema._fields)
+      if (errors.length > 0) {
+        throw new ValidationError(`Validation failed:\n${errors.join('\n')}`)
+      }
+
+      processed.push(hydrateDoc(hydrated as T, this.schema._fields) as T)
+    }
+
+    // Run before:insert hooks for each
+    for (const p of processed) {
+      await this._runHooks('before:insert', p)
+
+      // Check id collisions
+      if (this._isDelegate) {
+        if (this._adapter.count) {
+          const existing = await this._adapter.count(this.name, [
+            { field: 'id', op: 'eq', value: p.id },
+          ])
+          if (existing > 0) {
+            throw new DuplicateError(`Document with id "${p.id}" already exists`)
+          }
+        }
+      } else {
+        await this._ensureLoaded()
+        if (this._docs.has(p.id)) {
+          throw new DuplicateError(`Document with id "${p.id}" already exists`)
+        }
+      }
+    }
+
+    // Insert via delegate or cache
+    if (this._isDelegate && this._adapter.insertOne) {
+      for (const p of processed) {
+        await this._adapter.insertOne(
+          this.name,
+          dehydrateDoc(p) as Record<string, unknown>,
+        )
+      }
+    } else {
+      await this._ensureLoaded()
+      for (const p of processed) {
+        this._docs.set(p.id, p)
+        this._updateIndexes(p, 'add')
+      }
+      await this._persist()
+    }
+
+    // Run after:insert hooks for each
+    for (const p of processed) {
+      await this._runHooks('after:insert', p)
+    }
+
+    return processed
+  }
+
+  /**
+   * Update ALL documents in the collection with the given changes.
+   * Returns the number of documents updated.
+   *
+   * ```ts
+   * const count = await users.updateAll({ role: 'guest' })
+   * ```
+   */
+  async updateAll(changes: Partial<T>): Promise<number> {
+    // Validate changes against schema
+    const errors = validateDocument(
+      { ...changes } as Record<string, unknown>,
+      this.schema._fields,
+    )
+    if (errors.length > 0) {
+      const realErrors = errors.filter(
+        (e) => !e.startsWith('Missing required field') && !e.startsWith('Unknown field'),
+      )
+      if (realErrors.length > 0) {
+        throw new ValidationError(`Validation failed on update:\n${realErrors.join('\n')}`)
+      }
+    }
+
+    // Run before:update hooks
+    const emptyFilter = {} as Partial<T>
+    await this._runHooks('before:update', emptyFilter, changes)
+
+    if (this._isDelegate && this._adapter.updateMany) {
+      const count = await this._adapter.updateMany(
+        this.name,
+        [],
+        changes as Record<string, unknown>,
+      )
+      await this._runHooks('after:update', emptyFilter, changes, count)
+      return count
+    }
+
+    // Cache strategy
+    await this._ensureLoaded()
+
+    let count = 0
+    for (const [, doc] of this._docs) {
+      const updated = { ...doc, ...changes }
+      const vErrors = validateDocument(
+        updated as unknown as Record<string, unknown>,
+        this.schema._fields,
+      )
+      if (vErrors.length > 0) {
+        throw new ValidationError(`Validation failed on update:\n${vErrors.join('\n')}`)
+      }
+      this._updateIndexes(doc, 'remove')
+      this._docs.set(updated.id, updated)
+      this._updateIndexes(updated, 'add')
+      count++
+    }
+
+    if (count > 0) {
+      await this._persist()
+    }
+
+    await this._runHooks('after:update', emptyFilter, changes, count)
+    return count
+  }
+
+  /**
+   * Delete ALL documents in the collection.
+   * Returns the number of documents deleted.
+   *
+   * ```ts
+   * const count = await users.deleteAll()
+   * ```
+   */
+  async deleteAll(): Promise<number> {
+    // Run before:delete hooks
+    const emptyFilter = {} as Partial<T>
+    await this._runHooks('before:delete', emptyFilter)
+
+    if (this._isDelegate && this._adapter.deleteMany) {
+      const count = await this._adapter.deleteMany(this.name, [])
+      await this._runHooks('after:delete', emptyFilter, count)
+      return count
+    }
+
+    // Cache strategy
+    await this._ensureLoaded()
+
+    const count = this._docs.size
+    this._docs.clear()
+    this._indexes.clear()
+    await this._persist()
+
+    await this._runHooks('after:delete', emptyFilter, count)
+    return count
+  }
+
   /**
    * Find all documents matching a partial filter.
    */

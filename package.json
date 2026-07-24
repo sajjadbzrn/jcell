@@ -12,7 +12,8 @@
     "publish": "cd packages/core && npm publish"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/bun": "latest"
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
   }
 }

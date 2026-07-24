@@ -40,5 +40,9 @@ export { memoryAdapter } from './adapters/memory'
 export { d1Adapter } from './adapters/d1'
 export type { D1AdapterConfig } from './types'
 
+// SQLite adapter (Node.js / Bun — local SQLite database via better-sqlite3)
+export { sqliteAdapter } from './adapters/sqlite'
+export type { SqliteAdapterConfig } from './adapters/sqlite'
+
 // Custom error classes
 export { JcellError, ValidationError, DuplicateError, NotFoundError } from './errors'

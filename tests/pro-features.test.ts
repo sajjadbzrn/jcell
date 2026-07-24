@@ -219,6 +219,215 @@ describe('query count', () => {
   })
 })
 
+describe('batch operations', () => {
+  it('insertMany inserts multiple documents', async () => {
+    const docs = await users.insertMany([
+      { name: 'Batch1', age: 10, role: 'user' },
+      { name: 'Batch2', age: 20, role: 'user' },
+      { name: 'Batch3', age: 30, role: 'admin' },
+    ] as Partial<User>[])
+    expect(docs.length).toBe(3)
+    expect(docs[0]!.id).toBeDefined()
+    expect(docs[1]!.name).toBe('Batch2')
+
+    const all = await users.find()
+    expect(all.length).toBe(8) // 5 seed + 3 new
+  })
+
+  it('insertMany returns empty array for empty input', async () => {
+    const docs = await users.insertMany([])
+    expect(docs).toEqual([])
+  })
+
+  it('insertMany throws on invalid document', async () => {
+    expect(
+      users.insertMany([
+        { name: 'Valid', role: 'user' },
+        { name: 42 as any, role: 'user' },
+      ]),
+    ).rejects.toThrow()
+  })
+
+  it('updateAll updates all documents', async () => {
+    const count = await users.updateAll({ role: 'guest' } as Partial<User>)
+    expect(count).toBe(5)
+
+    const all = await users.find()
+    expect(all.every((u: User) => u.role === 'guest')).toBe(true)
+  })
+
+  it('updateAll returns 0 on empty collection', async () => {
+    const emptyCol = db.collection('empty', userSchema)
+    const count = await emptyCol.updateAll({ role: 'guest' } as Partial<User>)
+    expect(count).toBe(0)
+  })
+
+  it('deleteAll removes all documents', async () => {
+    const count = await users.deleteAll()
+    expect(count).toBe(5)
+
+    const all = await users.find()
+    expect(all.length).toBe(0)
+  })
+
+  it('deleteAll returns 0 on empty collection', async () => {
+    const emptyCol = db.collection('empty', userSchema)
+    const count = await emptyCol.deleteAll()
+    expect(count).toBe(0)
+  })
+})
+
+describe('aggregation pipeline operators ($or / $and)', () => {
+  it('$or within $match returns docs matching any condition', async () => {
+    // @ts-expect-error - accessing adapter internals for test
+    const result = await users._adapter.aggregate('users', [
+      { $match: { $or: [{ role: 'admin' }, { age: { $gte: 30 } }] } },
+    ]) as Record<string, unknown>[]
+    // Alice (admin,30), Charlie (admin,35) → 2 unique docs
+    expect(result.length).toBe(2)
+  })
+
+  it('$or within $match returns correct docs', async () => {
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $match: { $or: [{ name: 'Alice' }, { name: 'Bob' }] } },
+    ]) as Record<string, unknown>[]
+    expect(result.length).toBe(2)
+    const names = result.map((r: Record<string, unknown>) => r.name).sort()
+    expect(names).toEqual(['Alice', 'Bob'])
+  })
+
+  it('$and within $match returns docs matching all conditions', async () => {
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $match: { $and: [{ role: 'admin' }, { age: { $gte: 30 } }] } },
+    ]) as Record<string, unknown>[]
+    expect(result.length).toBe(2) // Alice (admin, 30), Charlie (admin, 35)
+    expect(result.every((r: Record<string, unknown>) => r.role === 'admin')).toBe(true)
+  })
+
+  it('field-level $gte / $lte operators work', async () => {
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $match: { age: { $gte: 25, $lte: 30 } } },
+    ]) as Record<string, unknown>[]
+    // Alice (30), Bob (25), Eve (28) — 3 docs with age between 25 and 30 inclusive
+    expect(result.length).toBe(3)
+  })
+
+  it('field-level $gt and $lt operators work', async () => {
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $match: { age: { $gt: 25, $lt: 35 } } },
+    ]) as Record<string, unknown>[]
+    expect(result.length).toBe(2) // Alice (30), Eve (28)
+  })
+
+  it('field-level $ne operator works', async () => {
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $match: { role: { $ne: 'admin' } } },
+    ]) as Record<string, unknown>[]
+    expect(result.length).toBe(3) // Bob (user), Diana (guest), Eve (user)
+    expect(result.every((r: Record<string, unknown>) => r.role !== 'admin')).toBe(true)
+  })
+
+  it('field-level $in operator works', async () => {
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $match: { role: { $in: ['admin', 'guest'] } } },
+    ]) as Record<string, unknown>[]
+    expect(result.length).toBe(3) // Alice (admin), Charlie (admin), Diana (guest)
+  })
+
+  it('field-level $contains operator works', async () => {
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $match: { name: { $contains: 'li' } } },
+    ]) as Record<string, unknown>[]
+    expect(result.length).toBe(2) // Alice, Charlie
+  })
+
+  it('field-level $startsWith operator works', async () => {
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $match: { name: { $startsWith: 'D' } } },
+    ]) as Record<string, unknown>[]
+    expect(result.length).toBe(1) // Diana
+  })
+
+  it('mixed $match with simple fields and $or works', async () => {
+    // role = 'admin' AND (name = 'Alice' OR name = 'Charlie')
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $match: { role: 'admin', $or: [{ name: 'Alice' }, { name: 'Charlie' }] } },
+    ]) as Record<string, unknown>[]
+    expect(result.length).toBe(2)
+  })
+
+  it('$or in aggregation with $sum works', async () => {
+    // Sum scores for admins OR age >= 30
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $match: { $or: [{ role: 'admin' }, { age: { $gte: 30 } }] } },
+      { $group: { _id: null, value: { $sum: '$score' } } },
+    ]) as Record<string, unknown>[]
+    const arr = result as Array<{ value: number }>
+    // Alice: 100 (admin,30), Charlie: 150 (admin,35) = 250
+    expect(arr[0]?.value).toBe(250)
+  })
+
+  it('$and in aggregation with $avg works', async () => {
+    // Avg age for admins with age >= 30
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $match: { $and: [{ role: 'admin' }, { age: { $gte: 30 } }] } },
+      { $group: { _id: null, value: { $avg: '$age' } } },
+    ]) as Record<string, unknown>[]
+    const arr = result as Array<{ value: number }>
+    expect(arr[0]?.value).toBe(32.5) // (30 + 35) / 2
+  })
+
+  it('$or as standalone pipeline stage works', async () => {
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $or: [
+        { $match: { role: 'admin' } },
+        { $match: { age: { $gte: 30 } } },
+      ]},
+    ]) as Record<string, unknown>[]
+    // admin: Alice, Charlie | age>=30: Alice, Charlie → 2 unique docs
+    expect(result.length).toBe(2)
+  })
+
+  it('$and as standalone pipeline stage works', async () => {
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $and: [
+        { $match: { role: 'admin' } },
+        { $match: { age: { $gte: 30 } } },
+      ]},
+    ]) as Record<string, unknown>[]
+    expect(result.length).toBe(2) // Alice (admin, 30), Charlie (admin, 35)
+  })
+
+  it('$match with only equality still works (backward compat)', async () => {
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $match: { role: 'admin' } },
+    ]) as Record<string, unknown>[]
+    expect(result.length).toBe(2)
+  })
+
+  it('empty $match returns all docs', async () => {
+    // @ts-expect-error
+    const result = await users._adapter.aggregate('users', [
+      { $match: {} },
+    ]) as Record<string, unknown>[]
+    expect(result.length).toBe(5)
+  })
+})
+
 describe('logical operators (orWhere)', () => {
   it('returns docs matching either OR condition', async () => {
     // role = 'guest' OR age >= 30
