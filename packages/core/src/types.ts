@@ -100,6 +100,10 @@ export interface FilterClause {
 /** Parameters for a generic query. */
 export interface QueryParams {
   filter?: FilterClause[]
+  /** OR-grouped filters. When present, the query returns docs matching
+   *  (all `filter` clauses AND) OR (any `orFilter` clause).
+   *  If only `orFilter` is provided, it acts as a pure OR query. */
+  orFilter?: FilterClause[]
   limit?: number
   offset?: number
   orderBy?: OrderByClause[]

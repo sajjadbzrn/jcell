@@ -128,49 +128,64 @@ export function fileAdapter(config: FileAdapterConfig = {}): StorageAdapter {
     })
   }
 
+  function matchClause(doc: Record<string, unknown>, clause: FilterClause): boolean {
+    const value = doc[clause.field]
+    switch (clause.op) {
+      case 'eq':
+        return value === clause.value
+      case 'ne':
+        return value !== clause.value
+      case 'gt':
+        return typeof value === 'number' && typeof clause.value === 'number'
+          ? value > clause.value
+          : false
+      case 'gte':
+        return typeof value === 'number' && typeof clause.value === 'number'
+          ? value >= clause.value
+          : false
+      case 'lt':
+        return typeof value === 'number' && typeof clause.value === 'number'
+          ? value < clause.value
+          : false
+      case 'lte':
+        return typeof value === 'number' && typeof clause.value === 'number'
+          ? value <= clause.value
+          : false
+      case 'in': {
+        const arr = clause.value as unknown[]
+        return arr.includes(value)
+      }
+      case 'contains':
+        return typeof value === 'string' && typeof clause.value === 'string'
+          ? value.includes(clause.value)
+          : false
+      case 'startsWith':
+        return typeof value === 'string' && typeof clause.value === 'string'
+          ? value.startsWith(clause.value)
+          : false
+      default:
+        return false
+    }
+  }
+
   function matchesFilters(
     doc: Record<string, unknown>,
     filters: FilterClause[],
   ): boolean {
-    return filters.every((clause) => {
-      const value = doc[clause.field]
-      switch (clause.op) {
-        case 'eq':
-          return value === clause.value
-        case 'ne':
-          return value !== clause.value
-        case 'gt':
-          return typeof value === 'number' && typeof clause.value === 'number'
-            ? value > clause.value
-            : false
-        case 'gte':
-          return typeof value === 'number' && typeof clause.value === 'number'
-            ? value >= clause.value
-            : false
-        case 'lt':
-          return typeof value === 'number' && typeof clause.value === 'number'
-            ? value < clause.value
-            : false
-        case 'lte':
-          return typeof value === 'number' && typeof clause.value === 'number'
-            ? value <= clause.value
-            : false
-        case 'in': {
-          const arr = clause.value as unknown[]
-          return arr.includes(value)
-        }
-        case 'contains':
-          return typeof value === 'string' && typeof clause.value === 'string'
-            ? value.includes(clause.value)
-            : false
-        case 'startsWith':
-          return typeof value === 'string' && typeof clause.value === 'string'
-            ? value.startsWith(clause.value)
-            : false
-        default:
-          return false
-      }
-    })
+    return filters.every((clause) => matchClause(doc, clause))
+  }
+
+  function matchesLogicalQuery(
+    doc: Record<string, unknown>,
+    andFilters?: FilterClause[],
+    orFilters?: FilterClause[],
+  ): boolean {
+    const hasAnd = !!(andFilters && andFilters.length > 0)
+    const hasOr = !!(orFilters && orFilters.length > 0)
+    if (!hasAnd && !hasOr) return true
+    if (hasAnd && !hasOr) return matchesFilters(doc, andFilters!)
+    if (!hasAnd && hasOr) return orFilters!.some((clause) => matchClause(doc, clause))
+    return matchesFilters(doc, andFilters!) || orFilters!.some((clause) => matchClause(doc, clause))
   }
 
   function sortDocs(
@@ -242,8 +257,10 @@ export function fileAdapter(config: FileAdapterConfig = {}): StorageAdapter {
     async query(collection: string, params: QueryParams): Promise<Record<string, unknown>[]> {
       let docs = await getDocs(collection)
 
-      if (params.filter && params.filter.length > 0) {
-        docs = docs.filter((doc) => matchesFilters(doc, params.filter!))
+      const hasAnd = !!(params.filter && params.filter.length > 0)
+      const hasOr = !!(params.orFilter && params.orFilter.length > 0)
+      if (hasAnd || hasOr) {
+        docs = docs.filter((doc) => matchesLogicalQuery(doc, params.filter, params.orFilter))
       }
 
       if (params.orderBy && params.orderBy.length > 0) {

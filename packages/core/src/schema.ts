@@ -18,6 +18,10 @@ export interface FieldDef {
   enumValues?: readonly unknown[]
   /** For ref fields – the target collection name */
   refCollection?: string
+  /** Whether this field should be indexed (set via .index()) */
+  indexed?: boolean
+  /** Whether the index should enforce uniqueness */
+  indexUnique?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -59,11 +63,12 @@ class FieldImpl<T> implements Field<T> {
     })
   }
 
-  index(_options?: { unique?: boolean }): Field<T> {
+  index(options?: { unique?: boolean }): Field<T> {
     return new FieldImpl<T>({
       ...this._def,
-      // Store index metadata; actual index creation happens in adapter
-    }) as Field<T>
+      indexed: true,
+      indexUnique: options?.unique,
+    })
   }
 }
 
@@ -173,6 +178,10 @@ export function schema<T extends Record<string, Field<unknown>>>(
   for (const [k, v] of entries) {
     const field = v as Field<unknown>
     fieldDefs[k] = field._def
+    // Collect index metadata from fields that have .index() applied
+    if (field._def.indexed) {
+      indexes.push({ field: k, unique: field._def.indexUnique })
+    }
   }
 
   return {

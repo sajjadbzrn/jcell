@@ -12,6 +12,7 @@ import type {
 import type { FieldDef } from './schema'
 import type { SchemaInstance } from './schema'
 import { validateDocument, applyDefaults } from './validator'
+import { ValidationError, DuplicateError, NotFoundError } from './errors'
 
 // ---------------------------------------------------------------------------
 // Query builder
@@ -22,7 +23,8 @@ import { validateDocument, applyDefaults } from './validator'
  * pagination, and then executed with `.find()` or `.first()`.
  */
 export class QueryBuilder<T extends DocWithId> {
-  private _filters: FilterClause[] = []
+  private _andFilters: FilterClause[] = []
+  private _orFilters: FilterClause[] = []
   private _limitValue: number | null = null
   private _offsetValue: number | null = null
   private _orderByClauses: OrderByClause[] = []
@@ -32,18 +34,38 @@ export class QueryBuilder<T extends DocWithId> {
   constructor(private _collection: Collection<T>) {}
 
   /**
-   * Start a filter on a specific field. Chain `.eq()`, `.gt()`, `.lt()`, `.in()`, etc.
+   * Start an AND filter on a specific field. Chain `.eq()`, `.gt()`, etc.
    */
   where(field: keyof T & string): FieldFilter<T> {
-    return new FieldFilter(this, field)
+    return new FieldFilter(this, field, 'and')
+  }
+
+  /**
+   * Start an OR filter on a specific field.
+   * Docs matching any OR filter are returned even if AND filters don't match.
+   *
+   * ```ts
+   * // role = 'admin' OR age >= 30
+   * const results = await users
+   *   .where('role').eq('admin')
+   *   .orWhere('age').gte(30)
+   *   .find()
+   * ```
+   */
+  orWhere(field: keyof T & string): FieldFilter<T> {
+    return new FieldFilter(this, field, 'or')
   }
 
   /**
    * Add a raw filter clause.
    * @internal
    */
-  _addFilter(clause: FilterClause): this {
-    this._filters.push(clause)
+  _addFilter(clause: FilterClause, mode: 'and' | 'or' = 'and'): this {
+    if (mode === 'or') {
+      this._orFilters.push(clause)
+    } else {
+      this._andFilters.push(clause)
+    }
     return this
   }
 
@@ -111,7 +133,8 @@ export class QueryBuilder<T extends DocWithId> {
    */
   async find(): Promise<T[]> {
     return this._collection._executeQuery({
-      filter: this._filters.length > 0 ? this._filters : undefined,
+      filter: this._andFilters.length > 0 ? this._andFilters : undefined,
+      orFilter: this._orFilters.length > 0 ? this._orFilters : undefined,
       limit: this._limitValue ?? undefined,
       offset: this._offsetValue ?? undefined,
       orderBy: this._orderByClauses.length > 0 ? this._orderByClauses : undefined,
@@ -125,7 +148,8 @@ export class QueryBuilder<T extends DocWithId> {
    */
   async first(): Promise<T | null> {
     const results = await this._collection._executeQuery({
-      filter: this._filters.length > 0 ? this._filters : undefined,
+      filter: this._andFilters.length > 0 ? this._andFilters : undefined,
+      orFilter: this._orFilters.length > 0 ? this._orFilters : undefined,
       limit: 1,
       offset: undefined,
       orderBy: this._orderByClauses.length > 0 ? this._orderByClauses : undefined,
@@ -136,10 +160,30 @@ export class QueryBuilder<T extends DocWithId> {
   }
 
   /**
+   * Execute the query and return the first matching document, or throw {@link NotFoundError}.
+   *
+   * ```ts
+   * const admin = await users
+   *   .where('role').eq('admin')
+   *   .firstOrFail()
+   * // Throws NotFoundError if no admin found
+   * ```
+   */
+  async firstOrFail(): Promise<T> {
+    const result = await this.first()
+    if (!result) {
+      throw new NotFoundError()
+    }
+    return result
+  }
+
+  /**
    * Count documents matching the current query.
    */
   async count(): Promise<number> {
-    return this._collection._count(this._filters.length > 0 ? this._filters : undefined)
+    const andFilters = this._andFilters.length > 0 ? this._andFilters : undefined
+    const orFilters = this._orFilters.length > 0 ? this._orFilters : undefined
+    return this._collection._count(andFilters, orFilters)
   }
 }
 
@@ -154,42 +198,43 @@ export class FieldFilter<T extends DocWithId> {
   constructor(
     private _query: QueryBuilder<T>,
     private _field: string,
+    private _mode: 'and' | 'or' = 'and',
   ) {}
 
   eq(value: unknown): QueryBuilder<T> {
-    return this._query._addFilter({ field: this._field, op: 'eq', value })
+    return this._query._addFilter({ field: this._field, op: 'eq', value }, this._mode)
   }
 
   ne(value: unknown): QueryBuilder<T> {
-    return this._query._addFilter({ field: this._field, op: 'ne', value })
+    return this._query._addFilter({ field: this._field, op: 'ne', value }, this._mode)
   }
 
   gt(value: number | Date): QueryBuilder<T> {
-    return this._query._addFilter({ field: this._field, op: 'gt', value })
+    return this._query._addFilter({ field: this._field, op: 'gt', value }, this._mode)
   }
 
   gte(value: number | Date): QueryBuilder<T> {
-    return this._query._addFilter({ field: this._field, op: 'gte', value })
+    return this._query._addFilter({ field: this._field, op: 'gte', value }, this._mode)
   }
 
   lt(value: number | Date): QueryBuilder<T> {
-    return this._query._addFilter({ field: this._field, op: 'lt', value })
+    return this._query._addFilter({ field: this._field, op: 'lt', value }, this._mode)
   }
 
   lte(value: number | Date): QueryBuilder<T> {
-    return this._query._addFilter({ field: this._field, op: 'lte', value })
+    return this._query._addFilter({ field: this._field, op: 'lte', value }, this._mode)
   }
 
   in(values: unknown[]): QueryBuilder<T> {
-    return this._query._addFilter({ field: this._field, op: 'in', value: values })
+    return this._query._addFilter({ field: this._field, op: 'in', value: values }, this._mode)
   }
 
   contains(value: string): QueryBuilder<T> {
-    return this._query._addFilter({ field: this._field, op: 'contains', value })
+    return this._query._addFilter({ field: this._field, op: 'contains', value }, this._mode)
   }
 
   startsWith(value: string): QueryBuilder<T> {
-    return this._query._addFilter({ field: this._field, op: 'startsWith', value })
+    return this._query._addFilter({ field: this._field, op: 'startsWith', value }, this._mode)
   }
 }
 
@@ -200,12 +245,19 @@ export class FieldFilter<T extends DocWithId> {
 /** Internal query shape passed from QueryBuilder to Collection. */
 interface InternalQuery {
   filter?: FilterClause[]
+  orFilter?: FilterClause[]
   limit?: number
   offset?: number
   orderBy?: OrderByClause[]
   select?: string[]
   populate?: string[]
 }
+
+/**
+ * Function to look up a collection by name from the parent DB.
+ * Used by `.with()` to resolve relationship references.
+ */
+export type CollectionResolver = (name: string) => Collection<DocWithId> | undefined
 
 /**
  * A typed collection that wraps a storage adapter with schema validation.
@@ -225,13 +277,17 @@ export class Collection<T extends DocWithId> {
   private _hooks: HookMap<T> = {}
   /** Secondary indexes (for Cache strategy). */
   private _indexes = new Map<string, Map<unknown, Set<string>>>()
+  /** Resolver to look up other collections (for `.with()` population). */
+  private _resolveCollection?: CollectionResolver
 
   constructor(
     readonly name: string,
     readonly schema: SchemaInstance<T>,
     private _adapter: StorageAdapter,
+    resolveCollection?: CollectionResolver,
   ) {
     this._isDelegate = typeof _adapter.query === 'function'
+    this._resolveCollection = resolveCollection
   }
 
   // -----------------------------------------------------------------------
@@ -320,6 +376,7 @@ export class Collection<T extends DocWithId> {
     if (this._isDelegate) {
       const params: QueryParams = {
         filter: query.filter,
+        orFilter: query.orFilter,
         limit: query.limit,
         offset: query.offset,
         orderBy: query.orderBy,
@@ -339,9 +396,11 @@ export class Collection<T extends DocWithId> {
     await this._ensureLoaded()
     let docs = Array.from(this._docs.values())
 
-    // Apply filters
-    if (query.filter && query.filter.length > 0) {
-      docs = docs.filter((doc) => this._matchesFilters(doc, query.filter!))
+    // Apply filters (AND + OR logic)
+    const hasAndFilters = !!(query.filter && query.filter.length > 0)
+    const hasOrFilters = !!(query.orFilter && query.orFilter.length > 0)
+    if (hasAndFilters || hasOrFilters) {
+      docs = docs.filter((doc) => this._matchesLogicalQuery(doc, query.filter, query.orFilter))
     }
 
     // Apply sort
@@ -374,15 +433,26 @@ export class Collection<T extends DocWithId> {
    * Count documents matching a filter.
    * @internal
    */
-  async _count(filter?: FilterClause[]): Promise<number> {
-    if (this._isDelegate && this._adapter.count) {
+  async _count(filter?: FilterClause[], orFilter?: FilterClause[]): Promise<number> {
+    const hasOr = !!(orFilter && orFilter.length > 0)
+
+    // Delegate count only supports AND filters — fall through to query for OR
+    if (this._isDelegate && this._adapter.count && !hasOr) {
       return this._adapter.count(this.name, filter)
     }
 
+    // For OR with delegate, execute a full query and count results
+    if (this._isDelegate) {
+      const docs = await this._executeQuery({ filter, orFilter })
+      return docs.length
+    }
+
+    // Cache strategy
     await this._ensureLoaded()
     let docs = Array.from(this._docs.values())
-    if (filter && filter.length > 0) {
-      docs = docs.filter((doc) => this._matchesFilters(doc, filter))
+    const hasAnd = !!(filter && filter.length > 0)
+    if (hasAnd || hasOr) {
+      docs = docs.filter((doc) => this._matchesLogicalQuery(doc, filter, orFilter))
     }
     return docs.length
   }
@@ -391,56 +461,89 @@ export class Collection<T extends DocWithId> {
   // Query helpers (Cache strategy)
   // -----------------------------------------------------------------------
 
+  /**
+   * Evaluate a document against AND + OR filter groups.
+   *
+   * Semantics:
+   * - If only AND filters: doc must match ALL of them.
+   * - If only OR filters: doc must match ANY of them.
+   * - If both: doc must match (ALL AND) OR (ANY OR).
+   * - If neither: doc matches vacuously.
+   */
+  private _matchesLogicalQuery(doc: T, andFilters?: FilterClause[], orFilters?: FilterClause[]): boolean {
+    const hasAnd = !!(andFilters && andFilters.length > 0)
+    const hasOr = !!(orFilters && orFilters.length > 0)
+
+    if (!hasAnd && !hasOr) return true
+
+    if (hasAnd && !hasOr) {
+      return this._matchesFilters(doc, andFilters!)
+    }
+
+    if (!hasAnd && hasOr) {
+      return this._matchesAnyFilter(doc, orFilters!)
+    }
+
+    // Both present: (AND group) OR (any single OR clause)
+    return this._matchesFilters(doc, andFilters!) || this._matchesAnyFilter(doc, orFilters!)
+  }
+
   private _matchesFilters(doc: T, filters: FilterClause[]): boolean {
-    return filters.every((clause) => {
-      const value = (doc as Record<string, unknown>)[clause.field]
-      switch (clause.op) {
-        case 'eq':
-          return value === clause.value
-        case 'ne':
-          return value !== clause.value
-        case 'gt':
-          return typeof value === 'number' && typeof clause.value === 'number'
-            ? value > clause.value
-            : value instanceof Date && clause.value instanceof Date
-              ? value.getTime() > clause.value.getTime()
-              : false
-        case 'gte':
-          return typeof value === 'number' && typeof clause.value === 'number'
-            ? value >= clause.value
-            : value instanceof Date && clause.value instanceof Date
-              ? value.getTime() >= clause.value.getTime()
-              : false
-        case 'lt':
-          return typeof value === 'number' && typeof clause.value === 'number'
-            ? value < clause.value
-            : value instanceof Date && clause.value instanceof Date
-              ? value.getTime() < clause.value.getTime()
-              : false
-        case 'lte':
-          return typeof value === 'number' && typeof clause.value === 'number'
-            ? value <= clause.value
-            : value instanceof Date && clause.value instanceof Date
-              ? value.getTime() <= clause.value.getTime()
-              : false
-        case 'in': {
-          const arr = clause.value as unknown[]
-          return arr.includes(value)
-        }
-        case 'contains': {
-          return typeof value === 'string'
-            ? value.includes(clause.value as string)
+    return filters.every((clause) => this._matchClause(doc, clause))
+  }
+
+  private _matchesAnyFilter(doc: T, filters: FilterClause[]): boolean {
+    return filters.some((clause) => this._matchClause(doc, clause))
+  }
+
+  private _matchClause(doc: T, clause: FilterClause): boolean {
+    const value = (doc as Record<string, unknown>)[clause.field]
+    switch (clause.op) {
+      case 'eq':
+        return value === clause.value
+      case 'ne':
+        return value !== clause.value
+      case 'gt':
+        return typeof value === 'number' && typeof clause.value === 'number'
+          ? value > clause.value
+          : value instanceof Date && clause.value instanceof Date
+            ? value.getTime() > clause.value.getTime()
             : false
-        }
-        case 'startsWith': {
-          return typeof value === 'string'
-            ? value.startsWith(clause.value as string)
+      case 'gte':
+        return typeof value === 'number' && typeof clause.value === 'number'
+          ? value >= clause.value
+          : value instanceof Date && clause.value instanceof Date
+            ? value.getTime() >= clause.value.getTime()
             : false
-        }
-        default:
-          return false
+      case 'lt':
+        return typeof value === 'number' && typeof clause.value === 'number'
+          ? value < clause.value
+          : value instanceof Date && clause.value instanceof Date
+            ? value.getTime() < clause.value.getTime()
+            : false
+      case 'lte':
+        return typeof value === 'number' && typeof clause.value === 'number'
+          ? value <= clause.value
+          : value instanceof Date && clause.value instanceof Date
+            ? value.getTime() <= clause.value.getTime()
+            : false
+      case 'in': {
+        const arr = clause.value as unknown[]
+        return arr.includes(value)
       }
-    })
+      case 'contains': {
+        return typeof value === 'string'
+          ? value.includes(clause.value as string)
+          : false
+      }
+      case 'startsWith': {
+        return typeof value === 'string'
+          ? value.startsWith(clause.value as string)
+          : false
+      }
+      default:
+        return false
+    }
   }
 
   private _sortDocs(docs: T[], orderBy: OrderByClause[]): T[] {
@@ -475,6 +578,9 @@ export class Collection<T extends DocWithId> {
   }
 
   private async _populateDocs(docs: T[], relations: string[]): Promise<T[]> {
+    // Without a collection resolver, populate is a no-op
+    if (!this._resolveCollection) return docs
+
     const results: T[] = []
     for (const doc of docs) {
       const populated = { ...doc } as Record<string, unknown>
@@ -484,10 +590,14 @@ export class Collection<T extends DocWithId> {
         const refId = populated[relation] as string | undefined
         if (!refId) continue
 
-        // Access the DB through Collection — we need the parent DB instance
-        // Since we don't have a direct reference, we skip population for now.
-        // The user of Delegate strategy gets population via JOINs in the adapter.
-        // For Cache strategy, this is a limitation.
+        // Look up the referenced collection and fetch the document
+        const refCollection = this._resolveCollection(fieldDef.refCollection)
+        if (!refCollection) continue
+
+        const refDoc = await refCollection.first({ id: refId } as Partial<DocWithId>)
+        if (refDoc) {
+          populated[relation] = refDoc
+        }
       }
       results.push(populated as T)
     }
@@ -521,7 +631,22 @@ export class Collection<T extends DocWithId> {
    */
   where(field: keyof T & string): FieldFilter<T> {
     const qb = new QueryBuilder<T>(this)
-    return new FieldFilter(qb, field)
+    return new FieldFilter(qb, field, 'and')
+  }
+
+  /**
+   * Create an OR-filtered query builder scoped to this collection.
+   *
+   * ```ts
+   * const results = await users
+   *   .orWhere('age').lt(25)
+   *   .orWhere('role').eq('admin')
+   *   .find()
+   * ```
+   */
+  orWhere(field: keyof T & string): FieldFilter<T> {
+    const qb = new QueryBuilder<T>(this)
+    return new FieldFilter(qb, field, 'or')
   }
 
   /**
@@ -585,7 +710,7 @@ export class Collection<T extends DocWithId> {
     // Validate
     const errors = validateDocument(hydrated, this.schema._fields)
     if (errors.length > 0) {
-      throw new TypeError(`Validation failed:\n${errors.join('\n')}`)
+      throw new ValidationError(`Validation failed:\n${errors.join('\n')}`)
     }
 
     const typed = hydrateDoc(hydrated as T, this.schema._fields) as T
@@ -601,13 +726,13 @@ export class Collection<T extends DocWithId> {
           { field: 'id', op: 'eq', value: typed.id },
         ])
         if (existing > 0) {
-          throw new Error(`Document with id "${typed.id}" already exists`)
+          throw new DuplicateError(`Document with id "${typed.id}" already exists`)
         }
       }
     } else {
       await this._ensureLoaded()
       if (this._docs.has(typed.id)) {
-        throw new Error(`Document with id "${typed.id}" already exists`)
+        throw new DuplicateError(`Document with id "${typed.id}" already exists`)
       }
     }
 
@@ -649,7 +774,7 @@ export class Collection<T extends DocWithId> {
         (e) => !e.startsWith('Missing required field') && !e.startsWith('Unknown field'),
       )
       if (realErrors.length > 0) {
-        throw new TypeError(`Validation failed on update:\n${realErrors.join('\n')}`)
+        throw new ValidationError(`Validation failed on update:\n${realErrors.join('\n')}`)
       }
     }
 
@@ -676,7 +801,7 @@ export class Collection<T extends DocWithId> {
           this.schema._fields,
         )
         if (errors.length > 0) {
-          throw new TypeError(`Validation failed on update:\n${errors.join('\n')}`)
+          throw new ValidationError(`Validation failed on update:\n${errors.join('\n')}`)
         }
         this._updateIndexes(doc, 'remove')
         this._docs.set(updated.id, updated)
@@ -752,6 +877,22 @@ export class Collection<T extends DocWithId> {
       limit: 1,
     })
     return results[0] ?? null
+  }
+
+  /**
+   * Find the first document matching a filter, or throw {@link NotFoundError}.
+   *
+   * ```ts
+   * const user = await users.firstOrFail({ id: 'abc' })
+   * // Throws NotFoundError if no document matches
+   * ```
+   */
+  async firstOrFail(filter?: Partial<T>): Promise<T> {
+    const result = await this.first(filter)
+    if (!result) {
+      throw new NotFoundError()
+    }
+    return result
   }
 
   // -----------------------------------------------------------------------

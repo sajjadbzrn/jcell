@@ -76,7 +76,7 @@ export function d1Adapter(config: D1AdapterConfig): StorageAdapter {
   // Query → SQL translation
   // -----------------------------------------------------------------------
 
-  function buildWhereClause(filters: FilterClause[]): { sql: string; values: unknown[] } {
+  function buildWhereClause(filters: FilterClause[], separator: 'AND' | 'OR' = 'AND'): { sql: string; values: unknown[] } {
     if (!filters || filters.length === 0) return { sql: '', values: [] }
 
     const conditions: string[] = []
@@ -85,54 +85,73 @@ export function d1Adapter(config: D1AdapterConfig): StorageAdapter {
     for (const clause of filters) {
       switch (clause.op) {
         case 'eq':
-          conditions.push(`"${clause.field}" = ?`)
+          conditions.push('"' + clause.field + '" = ?')
           values.push(serializeValue(clause.value))
           break
         case 'ne':
-          conditions.push(`"${clause.field}" != ?`)
+          conditions.push('"' + clause.field + '" != ?')
           values.push(serializeValue(clause.value))
           break
         case 'gt':
-          conditions.push(`"${clause.field}" > ?`)
+          conditions.push('"' + clause.field + '" > ?')
           values.push(serializeValue(clause.value))
           break
         case 'gte':
-          conditions.push(`"${clause.field}" >= ?`)
+          conditions.push('"' + clause.field + '" >= ?')
           values.push(serializeValue(clause.value))
           break
         case 'lt':
-          conditions.push(`"${clause.field}" < ?`)
+          conditions.push('"' + clause.field + '" < ?')
           values.push(serializeValue(clause.value))
           break
         case 'lte':
-          conditions.push(`"${clause.field}" <= ?`)
+          conditions.push('"' + clause.field + '" <= ?')
           values.push(serializeValue(clause.value))
           break
         case 'in': {
           const arr = clause.value as unknown[]
           if (arr.length === 0) {
-            conditions.push('1 = 0') // always false
+            conditions.push('1 = 0')
           } else {
             const placeholders = arr.map(() => '?').join(', ')
-            conditions.push(`"${clause.field}" IN (${placeholders})`)
+            conditions.push('"' + clause.field + '" IN (' + placeholders + ')')
             for (const v of arr) values.push(serializeValue(v))
           }
           break
         }
         case 'contains':
-          conditions.push(`"${clause.field}" LIKE ?`)
-          values.push(`%${clause.value}%`)
+          conditions.push('"' + clause.field + '" LIKE ?')
+          values.push('%' + clause.value + '%')
           break
         case 'startsWith':
-          conditions.push(`"${clause.field}" LIKE ?`)
-          values.push(`${clause.value}%`)
+          conditions.push('"' + clause.field + '" LIKE ?')
+          values.push('' + clause.value + '%')
           break
       }
     }
 
+    const joinStr = ' ' + separator + ' '
     return {
-      sql: conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '',
+      sql: conditions.length > 0 ? 'WHERE ' + conditions.join(joinStr) : '',
       values,
+    }
+  }
+
+  function buildLogicalWhere(andFilters?: FilterClause[], orFilters?: FilterClause[]): { sql: string; values: unknown[] } {
+    const hasAnd = !!(andFilters && andFilters.length > 0)
+    const hasOr = !!(orFilters && orFilters.length > 0)
+
+    if (!hasAnd && !hasOr) return { sql: '', values: [] }
+
+    if (hasAnd && !hasOr) return buildWhereClause(andFilters!, 'AND')
+    if (!hasAnd && hasOr) return buildWhereClause(orFilters!, 'OR')
+
+    // Both: (AND group) OR (OR group)
+    const andResult = buildWhereClause(andFilters!, 'AND')
+    const orResult = buildWhereClause(orFilters!, 'OR')
+    return {
+      sql: 'WHERE (' + andResult.sql.replace('WHERE ', '') + ') OR (' + orResult.sql.replace('WHERE ', '') + ')',
+      values: [...andResult.values, ...orResult.values],
     }
   }
 
@@ -232,7 +251,7 @@ export function d1Adapter(config: D1AdapterConfig): StorageAdapter {
       collection: string,
       params: QueryParams,
     ): Promise<Record<string, unknown>[]> {
-      const where = buildWhereClause(params.filter ?? [])
+      const where = buildLogicalWhere(params.filter, params.orFilter)
       const orderBy = buildOrderBy(params.orderBy ?? [])
       const select = buildSelect(params.select, tableName(collection))
 
@@ -456,7 +475,7 @@ export function d1Adapter(config: D1AdapterConfig): StorageAdapter {
           collection: string,
           params: QueryParams,
         ): Promise<Record<string, unknown>[]> => {
-          const where = buildWhereClause(params.filter ?? [])
+          const where = buildLogicalWhere(params.filter, params.orFilter)
           const orderBy = buildOrderBy(params.orderBy ?? [])
           const select = buildSelect(params.select, tableName(collection))
 

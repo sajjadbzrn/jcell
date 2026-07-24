@@ -218,3 +218,61 @@ describe('query count', () => {
     expect(c).toBe(2)
   })
 })
+
+describe('logical operators (orWhere)', () => {
+  it('returns docs matching either OR condition', async () => {
+    // role = 'guest' OR age >= 30
+    const results = await users
+      .where('role').eq('guest')
+      .orWhere('age').gte(30)
+      .find()
+    expect(results.length).toBe(3) // Diana (guest), Alice (30), Charlie (35)
+    expect(results.some((u: User) => u.name === 'Diana')).toBe(true)
+    expect(results.some((u: User) => u.name === 'Alice')).toBe(true)
+    expect(results.some((u: User) => u.name === 'Charlie')).toBe(true)
+  })
+
+  it('works with only OR conditions (no AND)', async () => {
+    // age < 25 OR role = 'admin'
+    const results = await users
+      .orWhere('age').lt(25)
+      .orWhere('role').eq('admin')
+      .find()
+    expect(results.length).toBe(3) // Alice (admin), Charlie (admin), Diana (20)
+  })
+
+  it('combines AND and OR groups', async () => {
+    // (score > 100) OR (role = 'guest')
+    const results = await users
+      .where('score').gt(100)
+      .orWhere('role').eq('guest')
+      .find()
+    expect(results.length).toBe(4) // Bob (200), Charlie (150), Eve (300), Diana (guest)
+  })
+
+  it('counts correctly with orWhere', async () => {
+    const c = await users
+      .where('role').eq('admin')
+      .orWhere('age').lt(25)
+      .count()
+    expect(c).toBe(3) // Alice (admin), Charlie (admin), Diana (20)
+  })
+
+  it('works with first() and orWhere', async () => {
+    const result = await users
+      .where('name').eq('NonExistent')
+      .orWhere('name').eq('Bob')
+      .first()
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('Bob')
+  })
+
+  it('all operators work in OR mode', async () => {
+    // name contains 'e' OR score >= 200
+    const results = await users
+      .where('name').contains('e')
+      .orWhere('score').gte(200)
+      .find()
+    expect(results.length).toBe(4) // Alice, Charlie, Eve (contain 'e'), Bob (200), Eve (300)
+  })
+})

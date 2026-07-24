@@ -7,6 +7,7 @@ import type {
 import type { SchemaInstance } from './schema'
 import { Collection } from './query-engine'
 import { schema, t } from './schema'
+import { JcellError } from './errors'
 
 /**
  * The main database instance.
@@ -66,7 +67,9 @@ export class DB {
       return existing as unknown as Collection<T>
     }
 
-    const col = new Collection<T>(name, schema, this._adapter)
+    const col = new Collection<T>(name, schema, this._adapter, (colName) => {
+      return this._collections.get(colName) as Collection<DocWithId> | undefined
+    })
     this._collections.set(name, col as unknown as Collection<DocWithId>)
     return col
   }
@@ -84,7 +87,7 @@ export class DB {
    */
   async transaction<T>(fn: (tx: DB) => Promise<T>): Promise<T> {
     if (!this._adapter.transaction) {
-      throw new Error(
+      throw new JcellError(
         'Transactions are not supported by this adapter. Use an adapter that implements the `transaction` method (e.g. D1).',
       )
     }
@@ -95,10 +98,12 @@ export class DB {
 
       // Copy over existing collection registrations to the tx DB
       for (const [name, col] of this._collections) {
-        txDB._collections.set(
-          name,
-          new Collection(name, col.schema, txAdapter) as unknown as Collection<DocWithId>,
-        )
+      txDB._collections.set(
+        name,
+        new Collection(name, col.schema, txAdapter, (colName) => {
+          return txDB._collections.get(colName) as Collection<DocWithId> | undefined
+        }) as unknown as Collection<DocWithId>,
+      )
       }
 
       return fn(txDB)

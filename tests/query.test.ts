@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'bun:test'
-import { createDB, schema, t, memoryAdapter } from '../packages/core/src/index.js'
+import { createDB, schema, t, memoryAdapter, ValidationError } from '../packages/core/src/index.js'
 
 const userSchema = schema({
   id: t.id(),
@@ -43,7 +43,7 @@ describe('insert', () => {
   it('rejects invalid documents on insert', async () => {
     expect(
       users.insert({ name: 42 } as unknown as Partial<User>),
-    ).rejects.toThrow(TypeError)
+    ).rejects.toThrow(ValidationError)
   })
 })
 
@@ -145,7 +145,7 @@ describe('update', () => {
   it('rejects invalid updates', async () => {
     expect(
       users.update({ id: user.id }, { name: 42 } as unknown as Partial<User>),
-    ).rejects.toThrow(TypeError)
+    ).rejects.toThrow(ValidationError)
   })
 
   it('returns 0 when nothing matches', async () => {
