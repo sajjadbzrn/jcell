@@ -5,18 +5,31 @@ import { join } from 'node:path'
 
 // ---------------------------------------------------------------------------
 // Graceful skip if better-sqlite3 native addon is unavailable
+//
+// Two-layered detection:
+// 1. Detect Bun runtime first — Bun's NAPI layer crashes when running
+//    better-sqlite3, and the crash is unrecoverable. Skip proactively.
+// 2. For other runtimes (Node.js), try to load better-sqlite3 and skip
+//    gracefully if the package isn't installed.
 // ---------------------------------------------------------------------------
 
 let canRun = false
-try {
-  // Quick smoke test: verify the native addon loads and works
-  const Database = require('better-sqlite3')
-  const sdb = new Database(':memory:')
-  sdb.exec('SELECT 1')
-  sdb.close()
-  canRun = true
-} catch {
-  console.warn('better-sqlite3 native addon not available - skipping SQLite adapter tests')
+
+const isBun = typeof process !== 'undefined' && typeof process.versions !== 'undefined' && process.versions.bun !== undefined
+
+if (isBun) {
+  console.warn('better-sqlite3 native addon is not compatible with Bun (Bun NAPI crash) - skipping SQLite adapter tests')
+} else {
+  try {
+    // Quick smoke test: verify the native addon loads and works
+    const Database = require('better-sqlite3')
+    const sdb = new Database(':memory:')
+    sdb.exec('SELECT 1')
+    sdb.close()
+    canRun = true
+  } catch {
+    console.warn('better-sqlite3 native addon not available - skipping SQLite adapter tests')
+  }
 }
 
 const run = canRun ? describe : describe.skip

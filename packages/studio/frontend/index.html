@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>jcell Studio</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <span class="logo-icon">⬡</span>
+        <span class="logo-text">jcell Studio</span>
+      </div>
+      <button class="theme-toggle" id="themeToggle" title="Toggle theme" aria-label="Toggle theme">
+        <span class="icon-sun">☀️</span>
+        <span class="icon-moon">🌙</span>
+      </button>
+    </div>
+
+    <nav class="sidebar-nav">
+      <button class="nav-item active" data-view="dashboard" id="navDashboard">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">Dashboard</span>
+      </button>
+      <button class="nav-item" data-view="data-browser" id="navDataBrowser">
+        <span class="nav-icon">🗂️</span>
+        <span class="nav-label">Data Browser</span>
+      </button>
+      <button class="nav-item" data-view="schema-viewer" id="navSchemaViewer">
+        <span class="nav-icon">📋</span>
+        <span class="nav-label">Schema Viewer</span>
+      </button>
+      <button class="nav-item" data-view="query-runner" id="navQueryRunner">
+        <span class="nav-icon">⚡</span>
+        <span class="nav-label">Query Runner</span>
+      </button>
+      <button class="nav-item" data-view="relations" id="navRelations">
+        <span class="nav-icon">🔗</span>
+        <span class="nav-label">Relations</span>
+      </button>
+      <button class="nav-item" data-view="migrations" id="navMigrations">
+        <span class="nav-icon">📦</span>
+        <span class="nav-label">Migrations</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="connection-info" id="connectionInfo">
+        <span class="status-dot"></span>
+        <span class="status-text">Connected</span>
+      </div>
+      <div class="version-info">v1.0.0</div>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main-content" id="mainContent">
+    <!-- Loading state -->
+    <div class="loading-screen" id="loadingScreen">
+      <div class="loading-spinner"></div>
+      <p>Connecting to database...</p>
+    </div>
+  </main>
+
+  <!-- Toast notifications -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

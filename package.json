@@ -2,10 +2,13 @@
   "name": "jcell-monorepo",
   "private": true,
   "workspaces": [
-    "packages/core"
+    "packages/core",
+    "packages/studio"
   ],
   "scripts": {
-    "build": "cd packages/core && bun run build",
+    "build": "bun run build:core && bun run build:studio",
+    "build:core": "cd packages/core && bun run build",
+    "build:studio": "cd packages/studio && bun run build",
     "test": "bun test",
     "test:watch": "bun test --watch",
     "typecheck": "bunx tsc -p tsconfig.typecheck.json --noEmit",

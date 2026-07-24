@@ -1,0 +1,44 @@
+{
+  "name": "@sajjadbzn/jcell-studio",
+  "version": "1.3.0",
+  "description": "Studio UI for jcell — browse, query, and manage your jcell database (like Prisma Studio)",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "jcell-studio": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "frontend",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "bun build ./src/cli.ts --outdir ./dist --target bun",
+    "prepublishOnly": "bun run build",
+    "publish": "npm publish"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "jcell",
+    "studio",
+    "database",
+    "json",
+    "orm",
+    "admin",
+    "gui"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sajjadbzrn/jcell.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sajjadbzrn/jcell/issues"
+  },
+  "homepage": "https://github.com/sajjadbzrn/jcell",
+  "license": "MIT",
+  "dependencies": {
+    "@sajjadbzn/jcell": "workspace:*"
+  }
+}

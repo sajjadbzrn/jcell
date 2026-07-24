@@ -1,8 +1,8 @@
 # @sajjadbzn/jcell
 
-**Lightweight, type-safe JSON-file database + ORM for TypeScript — runs on Node.js, Bun, and Cloudflare Workers.**
+**Lightweight, type-safe document database + ORM for TypeScript — runs on Node.js, Bun, and Cloudflare Workers.**
 
-No external database server required. No codegen. No heavy dependencies. Full TypeScript inference, schema validation, pagination, aggregation, hooks, migrations, and D1 support.
+No external database server. No codegen. No heavy dependencies. Full TypeScript inference, schema validation, pagination, aggregation, hooks, migrations, **SQLite support**, and a **built-in Studio UI**.
 
 ```ts
 import { createDB, schema, t, fileAdapter } from '@sajjadbzn/jcell'
@@ -31,6 +31,18 @@ const avgAge = await users.avg('age')
 const total = await users.where('role').eq('admin').count()
 ```
 
+---
+
+## Packages
+
+| Package | Description | Docs |
+|---------|-------------|------|
+| `@sajjadbzn/jcell` | Core database engine + adapters | [below](#features) |
+| `@sajjadbzn/jcell/d1` | Cloudflare Workers entrypoint | [D1 section](#d1-adapter--cloudflare-workers) |
+| `@sajjadbzn/jcell-studio` | 🔥 **Studio UI** — browse data visually | [Studio section](#jcell-studio-ui) |
+
+---
+
 ## Install
 
 ```bash
@@ -38,6 +50,16 @@ npm install @sajjadbzn/jcell
 # or
 bun add @sajjadbzn/jcell
 ```
+
+### Studio (optional)
+
+```bash
+npm install -D @sajjadbzn/jcell-studio
+# or
+bun add -D @sajjadbzn/jcell-studio
+```
+
+---
 
 ## Quick Start
 
@@ -54,6 +76,10 @@ const taskSchema = schema({
   tags: t.array(t.string()),
   createdAt: t.date().default(() => new Date()),
 })
+
+// TypeScript types are inferred automatically:
+type Task = typeof taskSchema.infer
+// { id: string; title: string; completed: boolean; priority: 'low' | 'medium' | 'high'; tags: string[]; createdAt: Date }
 ```
 
 ### 2. Create a database + collection
@@ -65,8 +91,10 @@ import { createDB, fileAdapter } from '@sajjadbzn/jcell'
 const db = createDB({ adapter: fileAdapter({ path: './data' }) })
 
 // Memory adapter — ephemeral, great for tests
-// import { memoryAdapter } from '@sajjadbzn/jcell'
 // const db = createDB({ adapter: memoryAdapter() })
+
+// SQLite adapter — local SQLite database
+// const db = createDB({ adapter: sqliteAdapter({ path: './app.db' }) })
 
 const tasks = db.collection('tasks', taskSchema)
 ```
@@ -97,29 +125,60 @@ await tasks.update({ id: task.id }, { completed: true, priority: 'medium' })
 await tasks.delete({ id: task.id })
 ```
 
+### 4. Open Studio (optional)
+
+```bash
+npx jcell-studio
+# → Opens http://127.0.0.1:5555 with a full data browser UI
+```
+
+---
+
+## Features
+
+- ✅ **Zero setup** — install and start storing data
+- ✅ **Fully typed** — schemas infer TypeScript types automatically, no codegen
+- ✅ **4 adapters** — File, Memory, SQLite, Cloudflare D1
+- ✅ **Atomic writes** — temp file + rename (file adapter)
+- ✅ **Crash recovery** — `.bak` snapshot fallback (file adapter)
+- ✅ **Schema validation** — every document validated on insert/update
+- ✅ **Query builder** — fluent API with 10 filter operators
+- ✅ **Aggregation** — `sum`, `avg`, `min`, `max`, `count` with optional filters
+- ✅ **Pagination** — `limit`/`offset` and `page()` helper
+- ✅ **Sorting** — multi-field, ascending/descending
+- ✅ **Hooks / middleware** — `before:insert`, `after:update`, etc.
+- ✅ **Relationships** — `t.ref('collection')` with `.with()` population
+- ✅ **Transactions** — atomic multi-operation (SQLite, D1)
+- ✅ **Indexing** — in-memory Map indexes + SQL indexes
+- ✅ **Migrations** — named, version-tracked schema migrations
+- ✅ **OR queries** — `orWhere()` with mixed AND/OR logic
+- ✅ **Aggregation pipeline** — `$match`, `$group`, `$sort`, `$or`, `$and`, etc.
+- ✅ **Studio UI** — visual data browser (optional package)
+
 ---
 
 ## Schema Builders
 
 | Builder | TS type | Notes |
 |---------|---------|-------|
-| `t.id()` | `string` | Auto-generated UUID |
+| `t.id()` | `string` | Auto-generated UUID v4 |
 | `t.string()` | `string` | |
 | `t.number()` | `number` | |
 | `t.boolean()` | `boolean` | |
 | `t.date()` | `Date` | Serialized as ISO string |
 | `t.array(t.string())` | `string[]` | Nested arrays of any type |
-| `t.object({ ... })` | `{ ... }` | Nested objects |
-| `t.enum(['a', 'b'] as const)` | `'a' \| 'b'` | Literal union |
+| `t.object({ ... })` | `{ ... }` | Nested objects with typed fields |
+| `t.enum(['a', 'b'] as const)` | `'a' \| 'b'` | Literal union type |
 | `t.ref('collectionName')` | `string` | Foreign key reference |
 
 ### Modifiers
 
 ```ts
-t.string().optional()          // string | undefined
-t.number().default(0)          // auto-filled with 0
-t.date().default(() => new Date())  // factory function
-t.string().index({ unique: true })  // index metadata
+t.string().optional()                        // string | undefined
+t.number().default(0)                        // auto-filled with 0
+t.date().default(() => new Date())           // factory function
+t.string().index({ unique: true })           // index metadata
+t.array(t.object({ key: t.string() }))       // array of objects
 ```
 
 ---
@@ -157,30 +216,72 @@ const results = await users
 | `.contains(str)` | String contains substring |
 | `.startsWith(str)` | String starts with |
 
+### OR queries
+
+```ts
+// role = 'guest' OR age >= 30
+const results = await users
+  .where('role').eq('guest')
+  .orWhere('age').gte(30)
+  .find()
+```
+
 ### Sorting & Pagination
 
 ```ts
-// Sort
+// Multi-field sort
 const sorted = await posts
   .orderByDesc('views')
   .orderBy('title')
   .find()
 
 // Limit & offset
-const page = await posts
+const page1 = await posts
   .where('status').eq('published')
   .orderByDesc('createdAt')
   .limit(10).offset(0)
   .find()
 
 // Page-based pagination (1-indexed)
-const page2 = await posts.page(2, 10).orderByDesc('createdAt').find()
+const page2 = await posts
+  .page(2, 10)
+  .orderByDesc('createdAt')
+  .find()
 
-// Query without filter
-const newest = await posts.query().orderByDesc('createdAt').limit(5).find()
+// Query without initial filter
+const newest = await posts
+  .query()
+  .orderByDesc('createdAt')
+  .limit(5)
+  .find()
 ```
 
-### Aggregation
+### Select (projection)
+
+```ts
+const partial = await users
+  .where('role').eq('admin')
+  .select(['id', 'name'])
+  .find()
+// Returns documents with only id and name fields
+```
+
+### firstOrFail
+
+```ts
+const user = await users.firstOrFail({ id: 'abc' })
+// Throws NotFoundError if no document matches
+```
+
+### Chained count
+
+```ts
+const adminCount = await users.where('role').eq('admin').count()
+```
+
+---
+
+## Aggregation
 
 ```ts
 const total = await products.count()
@@ -190,11 +291,25 @@ const avgPrice = await products.avg('price')
 const cheapest = await products.min('price')
 const mostExpensive = await products.max('price')
 
-// Chained with filters
+// Chained with query filters
 const highValueTotal = await products
   .where('price').gt(100)
   .sum('price')
 ```
+
+### Aggregation Pipeline
+
+For advanced use cases, the memory and file adapters support a MongoDB-style aggregation pipeline:
+
+```ts
+// @ts-expect-error - access adapter internals
+const result = await adapter.aggregate('users', [
+  { $match: { $or: [{ role: 'admin' }, { age: { $gte: 30 } }] } },
+  { $group: { _id: null, totalScore: { $sum: '$score' } } },
+])
+```
+
+Supported stages: `$match`, `$group` (`$sum`/`$avg`/`$min`/`$max`), `$sort`, `$limit`, `$skip`, `$count`, `$or`, `$and`.
 
 ---
 
@@ -215,7 +330,7 @@ users.hook('after:insert', async (doc) => {
 
 users.hook('before:update', async (filter, changes) => {
   if (changes.role === 'admin') {
-    // Validate the user is authorized
+    // Validate authorization
   }
 })
 
@@ -228,6 +343,25 @@ Available hooks: `before:insert`, `after:insert`, `before:update`, `after:update
 
 ---
 
+## Batch Operations
+
+```ts
+// Insert multiple at once
+const users = await db.collection('users', userSchema)
+  .insertMany([
+    { name: 'Alice', role: 'admin' },
+    { name: 'Bob', role: 'user' },
+  ])
+
+// Update ALL documents
+const count = await users.updateAll({ role: 'guest' })
+
+// Delete ALL documents
+const deleted = await users.deleteAll()
+```
+
+---
+
 ## Relationships
 
 Reference documents across collections with `t.ref()`:
@@ -236,42 +370,37 @@ Reference documents across collections with `t.ref()`:
 const postSchema = schema({
   id: t.id(),
   title: t.string(),
-  body: t.string(),
-  authorId: t.ref('users'),
-})
-
-const commentSchema = schema({
-  id: t.id(),
-  postId: t.ref('posts'),
-  body: t.string(),
+  authorId: t.ref('users'),  // references the 'users' collection
 })
 ```
 
-Use `.with('field')` to populate relationships (available when using the Delegate strategy / D1 adapter):
+Use `.with('field')` to populate referenced documents:
 
 ```ts
 const posts = await db.collection('posts', postSchema)
   .where('status').eq('published')
   .with('authorId')
   .find()
-// Each post now has the full author document populated
+// Each post.authorId is now the full author document
 ```
 
 ---
 
 ## Transactions
 
-Atomic multi-operation execution (supported by D1 adapter):
+Atomic multi-operation execution (supported by SQLite and D1 adapters):
 
 ```ts
 await db.transaction(async (tx) => {
-  const from = await tx.collection('accounts').first({ id: 'acc1' })
-  const to = await tx.collection('accounts').first({ id: 'acc2' })
+  const accounts = tx.collection('accounts', accountSchema)
 
-  await tx.collection('accounts').update({ id: 'acc1' }, { balance: from!.balance - 100 })
-  await tx.collection('accounts').update({ id: 'acc2' }, { balance: to!.balance + 100 })
+  const from = await accounts.first({ id: 'acc1' })
+  const to = await accounts.first({ id: 'acc2' })
+
+  await accounts.update({ id: 'acc1' }, { balance: from!.balance - 100 })
+  await accounts.update({ id: 'acc2' }, { balance: to!.balance + 100 })
 })
-// If anything throws, all changes are rolled back
+// If anything throws, ALL changes are rolled back
 ```
 
 ---
@@ -286,7 +415,7 @@ await users.createIndex('email', { unique: true })
 await users.dropIndex('email')
 ```
 
-- **D1 adapter**: Creates real SQL indexes
+- **D1 / SQLite adapters**: Creates real SQL indexes
 - **Cache adapters** (file/memory): Builds in-memory Map-based indexes for O(1) lookups
 
 ---
@@ -296,22 +425,18 @@ await users.dropIndex('email')
 Version your database schema with named migrations:
 
 ```ts
-import { createDB, createMigration, schema, t } from '@sajjadbzn/jcell'
+import { createDB, createMigration, schema, t, fileAdapter } from '@sajjadbzn/jcell'
 
-// Define migrations
 const m001 = createMigration('001_create_users', {
   async up(db) {
-    // Collections are auto-created on first use — no DDL needed with file/memory
-    // With D1: db.collection('users', userSchema) triggers `CREATE TABLE IF NOT EXISTS`
     const users = db.collection('users', userSchema)
-    await users.insert({ name: 'admin', email: 'admin@example.com', role: 'admin' })
+    await users.insert({ name: 'admin', role: 'admin' })
   },
   async down(db) {
-    // Only needed if you want rollback support
+    // Rollback logic here
   },
 })
 
-// Apply pending migrations
 const db = createDB({ adapter: fileAdapter({ path: './data' }) })
 await db.migrate([m001])
 ```
@@ -332,9 +457,31 @@ const db = createDB({
 })
 ```
 
-- Atomic writes (temp file → rename)
+- Atomic writes (temp file → rename over target)
 - Crash recovery via `.bak` fallback
-- Write queue per collection
+- Single-writer queue per collection
+- Best for: local development, single-user apps
+
+### SQLite adapter — Local SQLite database
+
+```ts
+import { sqliteAdapter } from '@sajjadbzn/jcell'
+
+const db = createDB({
+  adapter: sqliteAdapter({ path: './app.db' }),
+})
+```
+
+Requires `better-sqlite3`: `npm install better-sqlite3`
+
+- Real SQL DDL auto-generation from schemas
+- Full query translation (filters → parameterized WHERE clauses)
+- Native aggregation via SQL `SUM/AVG/MIN/MAX/COUNT`
+- Real SQL indexes (`CREATE INDEX`)
+- WAL mode for concurrent read performance
+- Foreign key enforcement
+- Transactions support
+- Best for: larger datasets, concurrent access, production
 
 ### Memory adapter — Ephemeral in-memory
 
@@ -344,7 +491,7 @@ import { memoryAdapter } from '@sajjadbzn/jcell'
 const db = createDB({ adapter: memoryAdapter() })
 ```
 
-All data lives in a Map. Perfect for tests, serverless functions, or transient workloads.
+All data lives in a `Map`. Perfect for tests, serverless functions, or transient workloads.
 
 ### D1 adapter — Cloudflare Workers
 
@@ -352,29 +499,15 @@ All data lives in a Map. Perfect for tests, serverless functions, or transient w
 import { createDB, schema, t } from '@sajjadbzn/jcell'
 import { d1Adapter } from '@sajjadbzn/jcell/d1'
 
-const userSchema = schema({
-  id: t.id(),
-  name: t.string(),
-  email: t.string(),
-  role: t.enum(['admin', 'user'] as const),
-})
-
 export default {
   async fetch(request: Request, env: Env) {
     const db = createDB({ adapter: d1Adapter({ binding: env.DB }) })
     const users = db.collection('users', userSchema)
 
     const url = new URL(request.url)
-
     if (url.pathname === '/users') {
       const all = await users.find()
       return Response.json(all)
-    }
-
-    if (url.pathname === '/users/search') {
-      const query = url.searchParams.get('q') ?? ''
-      const results = await users.where('name').contains(query).limit(20).find()
-      return Response.json(results)
     }
 
     return Response.json({ error: 'Not found' }, { status: 404 })
@@ -385,8 +518,7 @@ export default {
 Features on D1:
 - Schema → SQL DDL auto-generation
 - Nested objects/arrays stored as JSON TEXT columns
-- Full query translation (filters → parameterized WHERE clauses)
-- Aggregation via SQL `SUM/AVG/MIN/MAX/COUNT`
+- Full query translation to parameterized SQL
 - Transactions via D1's batch API
 - Real SQL indexes
 
@@ -408,15 +540,93 @@ const myAdapter: StorageAdapter = {
 }
 ```
 
-| Adapter | Import path | Runtime |
-|---------|-------------|---------|
-| File | `@sajjadbzn/jcell` | Node.js, Bun |
-| Memory | `@sajjadbzn/jcell` | Any |
-| D1 | `@sajjadbzn/jcell/d1` | Cloudflare Workers |
+### Adapter comparison
+
+| Adapter | Import path | Runtime | Transactions | Native indexes |
+|---------|-------------|---------|:------------:|:--------------:|
+| File | `@sajjadbzn/jcell` | Node.js, Bun | — | Map-based |
+| Memory | `@sajjadbzn/jcell` | Any | — | Map-based |
+| SQLite | `@sajjadbzn/jcell` | Node.js, Bun | ✅ | SQL indexes |
+| D1 | `@sajjadbzn/jcell/d1` | Cloudflare Workers | ✅ | SQL indexes |
 
 ---
 
-## Express Example
+## jcell Studio UI
+
+🔥 **Visual database browser** — like Prisma Studio for your jcell projects.
+
+![Studio screenshot placeholder]
+
+```bash
+# Install
+npm install -D @sajjadbzn/jcell-studio
+
+# Launch
+npx jcell-studio
+# or
+bunx jcell-studio
+# → Opens http://127.0.0.1:5555
+```
+
+> **Runtime requirement**: jcell-studio requires **Bun** 1.0+ (uses `Bun.serve()` internally).
+> Install Bun: `npm install -g bun` or visit https://bun.sh
+
+### Studio features
+
+| Feature | Description |
+|---------|-------------|
+| **📊 Dashboard** | Overview stats — collection counts, document totals, adapter info |
+| **🗂️ Data Browser** | Browse, search, sort, paginate, inline edit, add/delete documents |
+| **📋 Schema Viewer** | Inspect field types, PK/required flags, sample values per collection |
+| **⚡ Query Runner** | Write and test JSON queries against any collection |
+| **🔗 Relations Explorer** | Auto-discover reference fields between collections |
+| **📦 Migration Runner** | View applied migrations |
+| **🌙 Dark Mode** | Full dark/light theme toggle (persisted in localStorage) |
+
+### Studio CLI options
+
+```bash
+jcell-studio [options]
+
+Options:
+  -a, --adapter <type>    Adapter: "file" (default) or "sqlite"
+  -p, --path <path>       Data path. Default: "./data" (file) or "./data.db" (sqlite)
+  --port <number>         Port. Default: 5555
+  --host <string>         Host. Default: "127.0.0.1"
+  --no-open               Don't open browser automatically
+  -h, --help              Show help
+
+Examples:
+  jcell-studio
+  jcell-studio --adapter sqlite --path ./app.db
+  jcell-studio --adapter file --path ./my-data --port 3000 --no-open
+```
+
+### Studio API
+
+The Studio exposes a REST API on `http://127.0.0.1:<port>/api/`:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | Health check |
+| `/api/stats` | GET | Dashboard statistics |
+| `/api/collections` | GET | List all collections |
+| `/api/collections/:name` | GET | Browse data (supports `?filter=`, `?sort=`, `?page=`, `?limit=`) |
+| `/api/collections/:name/schema` | GET | View field schema |
+| `/api/collections/:name/documents` | POST | Insert a document |
+| `/api/collections/:name/documents/:id` | PUT | Update a document |
+| `/api/collections/:name/documents/:id` | DELETE | Delete a document |
+| `/api/query` | POST | Execute custom query |
+| `/api/relations` | GET | Discover relations |
+| `/api/migrations` | GET | List applied migrations |
+
+You can use any HTTP client to interact with the Studio API programmatically.
+
+---
+
+## Examples
+
+### Express.js
 
 ```ts
 import express from 'express'
@@ -444,10 +654,7 @@ app.get('/tasks', async (_req, res) => {
 
 app.post('/tasks', async (req, res) => {
   try {
-    const task = await tasks.insert({
-      title: req.body.title,
-      priority: req.body.priority ?? 'medium',
-    })
+    const task = await tasks.insert({ title: req.body.title, priority: req.body.priority ?? 'medium' })
     res.status(201).json(task)
   } catch (err: any) {
     res.status(400).json({ error: err.message })
@@ -457,8 +664,7 @@ app.post('/tasks', async (req, res) => {
 app.patch('/tasks/:id', async (req, res) => {
   const count = await tasks.update({ id: req.params.id }, req.body)
   if (count === 0) return res.status(404).json({ error: 'Not found' })
-  const updated = await tasks.first({ id: req.params.id })
-  res.json(updated)
+  res.json(await tasks.first({ id: req.params.id }))
 })
 
 app.delete('/tasks/:id', async (req, res) => {
@@ -467,25 +673,42 @@ app.delete('/tasks/:id', async (req, res) => {
   res.json({ deleted: true })
 })
 
-app.listen(3000, () => console.log('Running on http://localhost:3000'))
+app.listen(3000)
 ```
 
----
-
-## Elysia Example (Bun)
+### Hono
 
 ```ts
-import { Elysia, t as elysiaT } from 'elysia'
+import { Hono } from 'hono'
 import { createDB, schema, t, fileAdapter } from '@sajjadbzn/jcell'
 
-const taskSchema = schema({
-  id: t.id(),
-  title: t.string(),
-  completed: t.boolean().default(false),
-  priority: t.enum(['low', 'medium', 'high'] as const),
-  createdAt: t.date().default(() => new Date()),
+const taskSchema = schema({ /* ... */ })
+const db = createDB({ adapter: fileAdapter({ path: './data' }) })
+const tasks = db.collection('tasks', taskSchema)
+
+const app = new Hono()
+
+app.get('/tasks', async (c) => {
+  const all = await tasks.find()
+  return c.json(all)
 })
 
+app.post('/tasks', async (c) => {
+  const body = await c.req.json()
+  const task = await tasks.insert(body)
+  return c.json(task, 201)
+})
+
+export default app
+```
+
+### Elysia (Bun)
+
+```ts
+import { Elysia } from 'elysia'
+import { createDB, schema, t, fileAdapter } from '@sajjadbzn/jcell'
+
+const taskSchema = schema({ /* ... */ })
 const db = createDB({ adapter: fileAdapter({ path: './data' }) })
 const tasks = db.collection('tasks', taskSchema)
 
@@ -494,44 +717,98 @@ const app = new Elysia()
   .get('/tasks/high-priority', async () =>
     tasks.where('priority').eq('high').where('completed').eq(false).find()
   )
-  .post('/tasks', async ({ body }) => tasks.insert({ title: body.title, priority: body.priority }), {
-    body: elysiaT.Object({ title: elysiaT.String(), priority: elysiaT.String() }),
-  })
-  .patch('/tasks/:id', async ({ params, body }) => {
-    await tasks.update({ id: params.id }, body)
-    return tasks.first({ id: params.id })
-  })
-  .delete('/tasks/:id', async ({ params }) => {
-    await tasks.delete({ id: params.id })
-    return { deleted: true }
-  })
+  .post('/tasks', async ({ body }) => tasks.insert(body))
   .listen(3000)
-
-console.log(`Running on http://localhost:${app.server?.port}`)
 ```
 
 ---
 
-## Feature Comparison
+## Testing
 
-| Feature | File/Memory | D1 |
-|---------|:-----------:|:--:|
-| Schema validation | ✓ | ✓ |
-| CRUD | ✓ | ✓ |
-| Query builder | ✓ | ✓ |
-| Filter operators | ✓ | ✓ |
-| Sorting | ✓ | ✓ |
-| Pagination | ✓ | ✓ |
-| Aggregation | ✓ | ✓ |
-| Hooks | ✓ | ✓ |
-| Relationships (t.ref) | ✓ | ✓ |
-| Transactions | — | ✓ |
-| Native indexing | Map-based | SQL indexes |
-| Crash recovery | ✓ (.bak) | D1 built-in |
-| Atomic writes | ✓ (rename) | SQL transactions |
+```bash
+# Run all tests
+bun test
+
+# Run specific test files
+bun test tests/query.test.ts
+bun test tests/pro-features.test.ts
+
+# Run the Studio E2E tests
+bun test tests/studio.test.ts --timeout 30000
+
+# Run with watch mode
+bun test:watch
+```
+
+The test suite covers:
+- **105+ tests** across 8 test files
+- CRUD operations, query builder, aggregation, hooks, pagination, sorting
+- Batch operations, migrations, concurrency, crash recovery
+- OR/AND logical operators, aggregation pipeline
+- Type inference validation
+- **Studio E2E tests**: full HTTP API coverage (all endpoints, security, static files)
+
+---
+
+## Feature Matrix
+
+| Feature | File | Memory | SQLite | D1 |
+|---------|:----:|:------:|:------:|:--:|
+| Schema validation | ✅ | ✅ | ✅ | ✅ |
+| CRUD | ✅ | ✅ | ✅ | ✅ |
+| Query builder | ✅ | ✅ | ✅ | ✅ |
+| 10 filter operators | ✅ | ✅ | ✅ | ✅ |
+| Sorting | ✅ | ✅ | ✅ | ✅ |
+| Pagination | ✅ | ✅ | ✅ | ✅ |
+| Aggregation | ✅ | ✅ | ✅ | ✅ |
+| Hooks | ✅ | ✅ | ✅ | ✅ |
+| Relationships | ✅ | ✅ | ✅ | ✅ |
+| Batch operations | ✅ | ✅ | ✅ | ✅ |
+| OR queries | ✅ | ✅ | ✅ | ✅ |
+| Aggregation pipeline | ✅ | ✅ | ✅ | ✅ |
+| Transactions | — | — | ✅ | ✅ |
+| Native indexing | Map-based | Map-based | SQL | SQL |
+| Crash recovery | ✅ (.bak) | — | ✅ (WAL) | D1 built-in |
+| Atomic writes | ✅ (rename) | — | ✅ (SQL) | ✅ (SQL) |
+
+---
+
+## Project Structure
+
+```
+jcell/
+├── packages/
+│   ├── core/                 # @sajjadbzn/jcell — core engine + adapters
+│   │   └── src/
+│   │       ├── adapters/     # file, memory, sqlite, d1
+│   │       ├── db.ts         # Database class + migrations
+│   │       ├── schema.ts     # Schema builder (t.*)
+│   │       ├── query-engine.ts # Collection + QueryBuilder
+│   │       ├── validator.ts  # Validation + defaults
+│   │       ├── errors.ts     # Custom error classes
+│   │       └── types.ts       # TypeScript interfaces
+│   └── studio/               # @sajjadbzn/jcell-studio — Studio UI
+│       ├── src/
+│       │   ├── cli.ts        # CLI entry point
+│       │   └── server.ts     # HTTP server + REST API
+│       └── frontend/
+│           ├── index.html    # SPA shell
+│           ├── styles.css    # 700+ lines of modern CSS
+│           └── app.js        # Vanilla JS SPA (7 views)
+├── tests/                    # 105+ tests
+│   ├── query.test.ts
+│   ├── pro-features.test.ts
+│   ├── schema.test.ts
+│   ├── studio.test.ts        # Studio E2E (23 tests)
+│   └── ...
+└── examples/                 # Framework examples
+    ├── express/
+    ├── hono/
+    └── elysia/
+```
 
 ---
 
 ## License
 
-MIT
+MIT © Sajjad Bazarnajibi
